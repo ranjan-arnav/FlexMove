@@ -1,0 +1,89 @@
+"use client";
+
+import { Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+interface AIInsightsButtonProps {
+  message: string;
+  context?: any;
+  variant?: "default" | "outline" | "ghost";
+  size?: "sm" | "default" | "lg";
+  className?: string;
+  label?: string;
+  shortLabel?: string;
+  onClick: (message: string, context?: any) => void;
+}
+
+export function AIInsightsButton({ 
+  message, 
+  context, 
+  variant = "outline", 
+  size = "sm",
+  className = "",
+  label = "Ask Flexify",
+  shortLabel = "Ask",
+  onClick 
+}: AIInsightsButtonProps) {
+  return (
+    <Button
+      variant={variant}
+      size={size}
+      className={`gap-2 ${className} bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 dark:from-blue-900/50 dark:to-blue-800/50 dark:hover:from-blue-800/70 dark:hover:to-blue-700/70 border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-200 font-semibold transition-all shadow-sm hover:shadow-md`}
+      onClick={() => onClick(message, context)}
+      aria-label={label}
+    >
+      <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+      <span className="sm:hidden">{shortLabel}</span>
+      <span className="hidden sm:inline">{label}</span>
+    </Button>
+  );
+}
+
+interface AIInsightsMenuProps {
+  actions: Array<{
+    label: string;
+    message: string;
+    context?: any;
+  }>;
+  triggerLabel?: string;
+  size?: "sm" | "default" | "lg";
+  className?: string;
+  onClick: (message: string, context?: any) => void;
+}
+
+export function AIInsightsMenu({
+  actions,
+  triggerLabel = "Ask Flexify",
+  size = "sm",
+  className = "",
+  onClick,
+}: AIInsightsMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size={size}
+          className={`gap-2 ${className} bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 dark:from-blue-900/50 dark:to-blue-800/50 dark:hover:from-blue-800/70 dark:hover:to-blue-700/70 border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-200 font-semibold transition-all shadow-sm hover:shadow-md`}
+        >
+          <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <span className="sm:hidden">Ask</span>
+          <span className="hidden sm:inline">{triggerLabel}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        {actions.map((a, idx) => (
+          <DropdownMenuItem key={idx} onClick={() => onClick(a.message, a.context)} className="cursor-pointer">
+            {a.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

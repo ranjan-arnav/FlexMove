@@ -1,0 +1,6360 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { InteractiveMap } from "@/components/interactive-map";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
+import {
+  Truck,
+  Ship,
+  Plane,
+  Package,
+  BarChart3,
+  MapPin,
+  Plus,
+  DollarSign,
+  Leaf,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Users,
+  XCircle,
+  Shield,
+  User,
+  Zap,
+  RefreshCw,
+  MessageSquare,
+  Settings,
+  AlertCircle,
+  Check,
+  Sparkles,
+  Moon,
+  Sun,
+  Bell
+} from "lucide-react";
+import Image from "next/image";
+import { AnalyticsCharts } from "@/components/analytics-charts";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart";
+import { Bar, BarChart, Line, LineChart, Pie, PieChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, Legend as RLegend, Cell } from "recharts";
+import { Chatbot } from "@/components/chatbot";
+import { AIInsightsButton } from "@/components/ai-insights-button";
+import { TelegramLink } from "@/components/telegram-link";
+import { storage } from "@/lib/storage";
+import { cn, formatCurrencyINR } from "@/lib/utils";
+import { useShipments, useSuppliers, useTransporters, useCustomers, useNotifications } from "@/hooks/use-database";
+import { DatabaseService } from "@/lib/database";
+
+type UserRole = "supplier" | "transporter" | "customer" | "admin" | null;
+
+type TransportMode = "truck" | "ship" | "air" | "ev";
+type ShipmentStatus =
+  | "pending"
+  | "in-transit"
+  | "delivered"
+  | "delayed"
+  | "dispatched"
+  | "preparing";
+type RiskLevel = "low" | "medium" | "high";
+
+interface ShipmentData {
+  id: string;
+  customer: string;
+  transporter: string;
+  mode: TransportMode;
+  route: string;
+  status: ShipmentStatus;
+  eta: string;
+  cost: number;
+  carbonFootprint: number;
+  riskLevel: RiskLevel;
+  disruptionProbability: number;
+  // Additional fields used throughout the UI
+  origin: string;
+  destination: string;
+  weight: number;
+  priority: "low" | "medium" | "high" | "urgent";
+  progress: number;
+  vehicle?: string;
+  lastUpdate?: string;
+}
+
+interface DisruptionAlert {
+  id: string;
+  shipmentId: string;
+  type: string;
+  description: string;
+  delay: string;
+  status: 'active' | 'in-progress' | 'monitoring' | 'resolved' | 'acknowledged' | 'escalated';
+  severity: 'low' | 'medium' | 'high';
+  location: string;
+  timestamp: string;
+  suggestions: string[];
+  resolvedAt?: string;
+  escalatedAt?: string;
+}
+
+export default function FlexMovePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Initialize state from URL parameters IMMEDIATELY to prevent flash
+  const userParam = searchParams.get('user');
+  const tabParam = searchParams.get('tab');
+
+  const [currentUser, setCurrentUser] = useState<UserRole>(() => {
+    // Initialize from URL on first render
+    if (userParam && ['customer', 'supplier', 'transporter'].includes(userParam)) {
+      console.log('⚡ Initializing user from URL:', userParam);
+      return userParam as UserRole;
+    }
+    return null;
+  });
+
+  const [currentTab, setCurrentTab] = useState<string>(() => {
+    // Initialize from URL on first render
+    if (tabParam) {
+      console.log('⚡ Initializing tab from URL:', tabParam);
+      return tabParam;
+    }
+    return "overview";
+  });
+
+  const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [role, setRole] = useState<UserRole>(null);
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [loggedInUser, setLoggedInUser] = useState<any>(null);
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendEmail, setResendEmail] = useState("");
+
+  // Check for verification status on mount
+  useEffect(() => {
+    const verified = searchParams.get('verified');
+    const verificationError = searchParams.get('verification_error');
+
+    if (verified === 'true') {
+      addNotification('success', 'Email Verified!', 'Your email has been verified successfully. You can now sign in.');
+      // Remove the query param
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('verified');
+      router.replace(`?${params.toString()}`);
+    }
+
+    if (verificationError) {
+      addNotification('error', 'Verification Failed', decodeURIComponent(verificationError));
+      // Remove the query param
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('verification_error');
+      router.replace(`?${params.toString()}`);
+    }
+  }, []);
+
+  // Sync with URL changes (for browser navigation)
+  useEffect(() => {
+    const userParam = searchParams.get('user');
+    const tabParam = searchParams.get('tab');
+
+    console.log('🔄 URL changed, syncing state:', { user: userParam, tab: tabParam });
+
+    if (userParam && ['customer', 'supplier', 'transporter'].includes(userParam)) {
+      setCurrentUser(userParam as UserRole);
+    } else if (!userParam && currentUser) {
+      // URL was cleared, logout
+      setCurrentUser(null);
+    }
+
+    if (tabParam) {
+      setCurrentTab(tabParam);
+    } else if (!tabParam && currentTab !== 'overview') {
+      setCurrentTab('overview');
+    }
+  }, [searchParams]);
+
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      console.log('🔙 Browser navigation detected:', event);
+      const url = new URL(window.location.href);
+      const userParam = url.searchParams.get('user');
+      const tabParam = url.searchParams.get('tab');
+
+      if (userParam && ['customer', 'supplier', 'transporter'].includes(userParam)) {
+        setCurrentUser(userParam as UserRole);
+      } else {
+        setCurrentUser(null);
+      }
+
+      if (tabParam) {
+        setCurrentTab(tabParam);
+      } else {
+        setCurrentTab('overview');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Update URL when state changes
+  useEffect(() => {
+    if (currentUser) {
+      const params = new URLSearchParams();
+      params.set('user', currentUser);
+      if (currentTab && currentTab !== 'overview') {
+        params.set('tab', currentTab);
+      }
+
+      const newUrl = `?${params.toString()}`;
+      console.log('📍 Updating URL:', newUrl);
+      router.replace(newUrl, { scroll: false });
+    } else {
+      // Clear URL params when logged out
+      router.replace('/', { scroll: false });
+    }
+  }, [currentUser, currentTab, router]);
+
+  // Initialize storage on mount
+  useEffect(() => {
+    storage.initialize();
+  }, []);
+
+  // Real-time database hooks - Connect to Supabase!
+  const {
+    shipments: dbShipments,
+    loading: shipmentsLoading,
+    error: shipmentsError,
+    createShipment: dbCreateShipment,
+    updateShipment: dbUpdateShipment,
+    deleteShipment: dbDeleteShipment
+  } = useShipments({});
+
+  const { suppliers: dbSuppliers, loading: suppliersLoading } = useSuppliers({});
+  const { transporters: dbTransporters, loading: transportersLoading } = useTransporters({});
+  const { customers: dbCustomers, loading: customersLoading } = useCustomers();
+
+  // Sync database data with local state
+  useEffect(() => {
+    console.log('🚀 Supabase Data:', {
+      shipments: dbShipments?.length || 0,
+      suppliers: dbSuppliers?.length || 0,
+      transporters: dbTransporters?.length || 0,
+      customers: dbCustomers?.length || 0,
+      loading: { shipmentsLoading, suppliersLoading, transportersLoading, customersLoading }
+    });
+
+    if (dbShipments && dbShipments.length > 0) {
+      console.log('✅ Loading shipments from database:', dbShipments);
+      // Map database shipments to app format with FULL data linking
+      const mappedShipments = dbShipments.map(ship => {
+        const customer = dbCustomers?.find(c => c.id === ship.customer_id);
+        const transporter = dbTransporters?.find(t => t.id === ship.transporter_id);
+        const supplier = dbSuppliers?.find(s => s.id === ship.supplier_id);
+
+        console.log('� Linking shipment:', {
+          shipment_id: ship.shipment_id,
+          customer_id: ship.customer_id,
+          customer_name: customer?.name,
+          transporter_id: ship.transporter_id,
+          transporter_name: transporter?.name,
+          supplier_id: ship.supplier_id,
+          supplier_name: supplier?.name,
+          status: ship.status
+        });
+
+        return {
+          id: ship.shipment_id || ship.id,
+          customer: customer?.name || 'Unknown Customer',
+          transporter: transporter?.name || 'Unassigned',
+          supplier: supplier?.name || 'Unknown Supplier',
+          vehicle: 'Not Assigned',
+          mode: (ship.vehicle_type?.toLowerCase().includes('truck') ? 'truck' :
+            ship.vehicle_type?.toLowerCase().includes('ship') ? 'ship' :
+              ship.vehicle_type?.toLowerCase().includes('air') ? 'air' : 'ev') as TransportMode,
+          route: `${ship.from_location} → ${ship.to_location}`,
+          status: ship.status === 'in_transit' ? 'in-transit' :
+            ship.status === 'dispatched' ? 'dispatched' :
+              ship.status === 'delivered' ? 'delivered' :
+                ship.status === 'preparing' ? 'preparing' : 'pending' as ShipmentStatus,
+          eta: ship.eta ? new Date(ship.eta).toLocaleDateString() : 'TBD',
+          estimatedDelivery: ship.eta || new Date().toISOString(),
+          cost: Number(ship.cost) || 0,
+          carbonFootprint: Number(ship.carbon_footprint) || 0,
+          riskLevel: 'low' as RiskLevel,
+          disruptionProbability: 5,
+          origin: ship.from_location,
+          destination: ship.to_location,
+          weight: Number(ship.weight) || 0,
+          priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
+          progress: ship.progress || 0,
+          type: ship.vehicle_type || 'standard',
+          // Store raw DB data for reference
+          dbData: ship
+        };
+      });
+
+      console.log('🔄 Updating globalShipments with FULL LINKING:', mappedShipments.length, 'shipments');
+      setGlobalShipments(mappedShipments);
+
+      // Log complete connection summary
+      console.log('🔗 COMPLETE DATA LINKING SUMMARY:');
+      mappedShipments.forEach(ship => {
+        console.log(`
+          📦 Shipment: ${ship.id}
+          👤 Customer: ${ship.customer} (${ship.dbData?.customer_id})
+          🏭 Supplier: ${ship.supplier} (${ship.dbData?.supplier_id})
+          🚚 Transporter: ${ship.transporter} (${ship.dbData?.transporter_id})
+          🚛 Vehicle: ${ship.vehicle}
+          📍 Route: ${ship.route}
+          ⚡ Status: ${ship.status}
+          ✅ All entities connected!
+        `);
+      });
+    }
+  }, [dbShipments, dbCustomers, dbTransporters, shipmentsLoading, customersLoading, transportersLoading]);
+
+  // Global state for notifications and alerts
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string;
+    timestamp: Date;
+  }>>([]);
+
+  // Global state for shipments and data
+  const [globalShipments, setGlobalShipments] = useState<ShipmentData[]>([
+    {
+      id: "SH001",
+      customer: "TechCorp India Pvt Ltd",
+      transporter: "FastTrack Logistics India",
+      mode: "truck",
+      route: "Delhi → Mumbai",
+      status: "in-transit",
+      eta: "2 days",
+      cost: 1200,
+      carbonFootprint: 85,
+      riskLevel: "low",
+      disruptionProbability: 5,
+      origin: "New Delhi",
+      destination: "Mumbai",
+      weight: 500,
+      priority: "high",
+      progress: 65
+    },
+    {
+      id: "SH002",
+      customer: "Global Retail India",
+      transporter: "Ocean Express India",
+      mode: "ship",
+      route: "Mumbai → Chennai",
+      status: "delivered",
+      eta: "Completed",
+      cost: 3500,
+      carbonFootprint: 220,
+      riskLevel: "medium",
+      disruptionProbability: 15,
+      origin: "Mumbai",
+      destination: "Chennai",
+      weight: 2000,
+      priority: "medium",
+      progress: 100
+    },
+    {
+      id: "SH003",
+      customer: "Manufacturing Co. India",
+      transporter: "Green Transport India",
+      mode: "ev",
+      route: "Bengaluru → Hyderabad",
+      status: "pending",
+      eta: "5 days",
+      cost: 800,
+      carbonFootprint: 45,
+      riskLevel: "low",
+      disruptionProbability: 8,
+      origin: "Bengaluru",
+      destination: "Hyderabad",
+      weight: 350,
+      priority: "low",
+      progress: 10
+    },
+    {
+      id: "SH004",
+      customer: "Global Retail India",
+      transporter: "Ocean Express India",
+      mode: "ship",
+      route: "Chennai → Kolkata",
+      status: "dispatched",
+      eta: "3 days",
+      cost: 2450,
+      carbonFootprint: 120,
+      riskLevel: "low",
+      disruptionProbability: 10,
+      origin: "Chennai",
+      destination: "Kolkata",
+      weight: 1200,
+      priority: "medium",
+      progress: 25
+    },
+    {
+      id: "SH007",
+      customer: "Manufacturing Co. India",
+      transporter: "Green Transport India",
+      mode: "truck",
+      route: "Ahmedabad → Jaipur",
+      status: "preparing",
+      eta: "5 days",
+      cost: 950,
+      carbonFootprint: 65,
+      riskLevel: "low",
+      disruptionProbability: 5,
+      origin: "Ahmedabad",
+      destination: "Jaipur",
+      weight: 450,
+      priority: "low",
+      progress: 10
+    }
+  ]);
+  const [globalDisruptions, setGlobalDisruptions] = useState<DisruptionAlert[]>([]);
+
+  // Global state for create shipment flow
+  const [showCreateShipment, setShowCreateShipment] = useState(false);
+  const [createShipmentStep, setCreateShipmentStep] = useState<'customer' | 'transporter' | 'details'>('customer');
+  const [selectedCustomer, setSelectedCustomer] = useState<string>('');
+  const [selectedTransporter, setSelectedTransporter] = useState<string>('');
+  const [shipmentFormData, setShipmentFormData] = useState<{
+    origin: string;
+    destination: string;
+    weight: string;
+    priority: string;
+    mode: string;
+  }>({
+    origin: '',
+    destination: '',
+    weight: '',
+    priority: '',
+    mode: ''
+  });
+
+  // Global state for rerouting
+  const [showRerouteDialog, setShowRerouteDialog] = useState(false);
+  const [selectedDisruption, setSelectedDisruption] = useState<DisruptionAlert | null>(null);
+
+  // Chatbot state
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false);
+  const [chatbotContext, setChatbotContext] = useState<{
+    message: string;
+    context?: any;
+  } | null>(null);
+
+  // Dark mode state
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Toggle dark mode
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  // Handle AI Insights button click
+  const handleAIInsights = (message: string, context?: any) => {
+    setIsChatbotOpen(true);
+    setChatbotContext({ message, context });
+    // Clear after a brief moment to allow re-triggering
+    setTimeout(() => setChatbotContext(null), 1000);
+  };
+  const [availableRoutes, setAvailableRoutes] = useState<Array<{
+    id: string;
+    name: string;
+    distance: number;
+    estimatedTime: string;
+    cost: number;
+    carbonFootprint: number;
+    riskLevel: 'low' | 'medium' | 'high';
+    status: 'available' | 'congested' | 'delayed';
+  }>>([]);
+
+  // Global state for customer orders
+  const [showNewOrderDialog, setShowNewOrderDialog] = useState(false);
+  const [selectedSupplier, setSelectedSupplier] = useState<string>('');
+  const [orderFormData, setOrderFormData] = useState<{
+    product: string;
+    quantity: string;
+    priority: string;
+    deliveryDate: string;
+    specialInstructions: string;
+  }>({
+    product: '',
+    quantity: '',
+    priority: '',
+    deliveryDate: '',
+    specialInstructions: ''
+  });
+
+  const handleLogin = async (email: string, password: string) => {
+    setAuthLoading(true);
+    setAuthError("");
+    setShowResendVerification(false);
+
+    try {
+      const result = await DatabaseService.loginUser(email, password);
+
+      if (result.success && result.user) {
+        setCurrentUser(result.user.role);
+        setLoggedInUser(result.user);
+        addNotification('success', 'Login Successful', `Welcome back, ${result.user.name}!`);
+
+        // Update URL to show the correct dashboard
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('user', result.user.role);
+        router.push(`?${params.toString()}`);
+      } else {
+        setAuthError(result.error || 'Invalid email or password');
+        // Show resend verification button if needed
+        if ((result as any).needsVerification) {
+          setShowResendVerification(true);
+          setResendEmail(email);
+        }
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      setAuthError('An error occurred during login. Please try again.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setAuthLoading(true);
+    try {
+      const response = await fetch('/api/resend-verification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: resendEmail }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        addNotification('success', 'Email Sent!', result.message);
+        setShowResendVerification(false);
+      } else {
+        addNotification('error', 'Failed', result.error);
+      }
+    } catch (error) {
+      console.error('Resend verification error:', error);
+      addNotification('error', 'Error', 'Failed to resend verification email');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignup = async (userData: {
+    email: string;
+    password: string;
+    name: string;
+    role: 'supplier' | 'transporter' | 'customer';
+    company_name?: string;
+    phone?: string;
+  }) => {
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const result = await DatabaseService.createUser(userData);
+
+      if (result.success) {
+        // Don't auto-login, show success message instead
+        addNotification('success', 'Account Created!', result.message || 'Please check your email to verify your account.');
+        setAuthError("");
+        // Switch to login mode
+        setIsLogin(true);
+        // Clear form
+        setEmail("");
+        setPassword("");
+        setFullName("");
+      } else {
+        setAuthError(result.error || 'Failed to create account');
+      }
+    } catch (error) {
+      console.error('Signup error:', error);
+      setAuthError('An error occurred during signup. Please try again.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setShowCreateShipment(false);
+    setCreateShipmentStep('customer');
+    setSelectedCustomer('');
+    setSelectedTransporter('');
+    setShipmentFormData({
+      origin: '',
+      destination: '',
+      weight: '',
+      priority: '',
+      mode: ''
+    });
+    addNotification('info', 'Logged Out', 'You have been successfully logged out.');
+  };
+
+  const addNotification = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
+    const notification = {
+      id: Date.now().toString(),
+      type,
+      title,
+      message,
+      timestamp: new Date()
+    };
+    setNotifications(prev => [...prev, notification]);
+
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== notification.id));
+    }, 5000);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
+  const handleCreateShipment = () => {
+    setShowCreateShipment(true);
+    setCreateShipmentStep('customer');
+  };
+
+  const handleCustomerSelected = (customerId: string) => {
+    setSelectedCustomer(customerId);
+    setCreateShipmentStep('transporter');
+    addNotification('info', 'Customer Selected', 'Please select a transporter for this shipment.');
+  };
+
+  const handleTransporterSelected = (transporterId: string) => {
+    setSelectedTransporter(transporterId);
+    setCreateShipmentStep('details');
+    addNotification('info', 'Transporter Selected', 'Please fill in the shipment details.');
+  };
+
+  const handleShipmentCreated = async (shipmentData: any) => {
+    try {
+      // Map UI customer/transporter IDs to database UUIDs
+      // For now, use the first customer and supplier from database
+      const dbCustomerId = dbCustomers && dbCustomers.length > 0
+        ? dbCustomers[0].id
+        : '850e8400-e29b-41d4-a716-446655440001'; // Fallback to demo customer
+
+      const dbSupplierId = dbSuppliers && dbSuppliers.length > 0
+        ? dbSuppliers[0].id
+        : '650e8400-e29b-41d4-a716-446655440001'; // Fallback to demo supplier
+
+      // IMPORTANT: Leave transporter_id as NULL initially
+      // Transporter will be assigned later when they accept the shipment
+      const dbTransporterId = null;
+
+      console.log('🔍 Creating shipment with IDs:', {
+        customer: dbCustomerId,
+        supplier: dbSupplierId,
+        transporter: dbTransporterId
+      });
+
+      // Create shipment in database (unassigned - no transporter yet)
+      const newShipment = await dbCreateShipment({
+        shipment_id: `SH${String(Math.floor(Math.random() * 900) + 100).padStart(3, '0')}`,
+        supplier_id: dbSupplierId,
+        customer_id: dbCustomerId,
+        transporter_id: dbTransporterId, // NULL - unassigned
+        from_location: shipmentData.origin,
+        to_location: shipmentData.destination,
+        status: 'preparing', // Initial status - waiting for transporter
+        progress: 0,
+        eta: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days from now
+        cargo_type: shipmentData.cargoType || 'General',
+        weight: `${shipmentData.weight} kg`,
+        vehicle_type: shipmentData.mode === 'truck' ? 'Truck' : shipmentData.mode === 'ship' ? 'Ship' : shipmentData.mode === 'air' ? 'Air' : 'EV Truck',
+        cost: Math.floor(Math.random() * 2000) + 500,
+        carbon_footprint: Math.floor(Math.random() * 200) + 50,
+      });
+
+      console.log('✅ Shipment created in database:', newShipment);
+
+      // Reset form
+      setShowCreateShipment(false);
+      setCreateShipmentStep('customer');
+      setSelectedCustomer('');
+      setSelectedTransporter('');
+      setShipmentFormData({
+        origin: '',
+        destination: '',
+        weight: '',
+        priority: '',
+        mode: ''
+      });
+
+      addNotification('success', 'Shipment Created', `Shipment ${newShipment.shipment_id} has been created! Waiting for transporter to accept.`);
+    } catch (error) {
+      console.error('❌ Error creating shipment:', error);
+      addNotification('error', 'Creation Failed', 'Failed to create shipment. Please try again.');
+    }
+  };
+
+  const handleDisruptionAction = (disruptionId: string, action: string) => {
+    setGlobalDisruptions(prev => prev.filter(d => d.id !== disruptionId));
+    addNotification('success', 'Disruption Resolved', `Action "${action}" has been applied to disruption ${disruptionId}.`);
+  };
+
+  const handleRequestAction = (requestId: string, action: 'accept' | 'decline') => {
+    addNotification(
+      action === 'accept' ? 'success' : 'info',
+      `Request ${action === 'accept' ? 'Accepted' : 'Declined'}`,
+      `Request ${requestId} has been ${action === 'accept' ? 'accepted' : 'declined'}.`
+    );
+  };
+
+  const handleShipmentStatusUpdate = (shipmentId: string, newStatus: string) => {
+    setGlobalShipments(prev => prev.map(s =>
+      s.id === shipmentId ? { ...s, status: newStatus as ShipmentStatus } : s
+    ));
+    addNotification('info', 'Status Updated', `Shipment ${shipmentId} status updated to ${newStatus}.`);
+  };
+
+  const handleRatingSubmit = (shipmentId: string, rating: number, feedback: string) => {
+    addNotification('success', 'Rating Submitted', `Thank you for rating shipment ${shipmentId}. Your feedback has been recorded.`);
+  };
+
+  const handleRerouteRequest = (disruption: DisruptionAlert) => {
+    setSelectedDisruption(disruption);
+    // Generate available routes based on disruption
+    const routes = generateAvailableRoutes(disruption);
+    setAvailableRoutes(routes);
+    setShowRerouteDialog(true);
+  };
+
+  const generateAvailableRoutes = (disruption: DisruptionAlert) => {
+    // Mock data - in real app, this would come from a routing API
+    return [
+      {
+        id: 'R001',
+        name: 'Alternative Highway Route',
+        distance: 450,
+        estimatedTime: '6-8 hours',
+        cost: 1200,
+        carbonFootprint: 85,
+        riskLevel: 'low' as const,
+        status: 'available' as const
+      },
+      {
+        id: 'R002',
+        name: 'Coastal Route',
+        distance: 520,
+        estimatedTime: '8-10 hours',
+        cost: 1100,
+        carbonFootprint: 95,
+        riskLevel: 'medium' as const,
+        status: 'available' as const
+      },
+      {
+        id: 'R003',
+        name: 'Mountain Pass Route',
+        distance: 380,
+        estimatedTime: '5-7 hours',
+        cost: 1350,
+        carbonFootprint: 70,
+        riskLevel: 'high' as const,
+        status: 'congested' as const
+      },
+      {
+        id: 'R004',
+        name: 'Express Lane Route',
+        distance: 420,
+        estimatedTime: '4-6 hours',
+        cost: 1500,
+        carbonFootprint: 90,
+        riskLevel: 'low' as const,
+        status: 'available' as const
+      }
+    ];
+  };
+
+  const handleRouteSelection = (routeId: string) => {
+    const selectedRoute = availableRoutes.find(r => r.id === routeId);
+    if (selectedRoute && selectedDisruption) {
+      // Update shipment with new route
+      setGlobalShipments(prev => prev.map(shipment =>
+        shipment.id === selectedDisruption.shipmentId
+          ? {
+            ...shipment,
+            route: selectedRoute.name,
+            eta: selectedRoute.estimatedTime,
+            cost: selectedRoute.cost,
+            carbonFootprint: selectedRoute.carbonFootprint,
+            riskLevel: selectedRoute.riskLevel
+          }
+          : shipment
+      ));
+
+      // Remove disruption
+      setGlobalDisruptions(prev => prev.filter(d => d.id !== selectedDisruption.id));
+
+      addNotification('success', 'Route Updated', `Shipment rerouted via ${selectedRoute.name}. New ETA: ${selectedRoute.estimatedTime}`);
+      setShowRerouteDialog(false);
+      setSelectedDisruption(null);
+    }
+  };
+
+  const handleNewOrder = () => {
+    setShowNewOrderDialog(true);
+    setSelectedSupplier('');
+    setOrderFormData({
+      product: '',
+      quantity: '',
+      priority: '',
+      deliveryDate: '',
+      specialInstructions: ''
+    });
+  };
+
+  const handleSupplierSelection = (supplierId: string) => {
+    setSelectedSupplier(supplierId);
+  };
+
+  const handleOrderSubmit = () => {
+    if (!selectedSupplier || !orderFormData.product || !orderFormData.quantity) {
+      addNotification('error', 'Missing Information', 'Please fill in all required fields.');
+      return;
+    }
+
+    const supplier = suppliers.find(s => s.id === selectedSupplier);
+    if (supplier) {
+      addNotification('success', 'Order Placed', `New order placed with ${supplier.name}. Order ID: ORD${Date.now()}`);
+      setShowNewOrderDialog(false);
+      setSelectedSupplier('');
+      setOrderFormData({
+        product: '',
+        quantity: '',
+        priority: '',
+        deliveryDate: '',
+        specialInstructions: ''
+      });
+    }
+  };
+
+  // Global data
+  const customers = [
+    { id: "C001", name: "TechCorp India Pvt Ltd", location: "New Delhi, DL" },
+    { id: "C002", name: "Global Retail India", location: "Mumbai, MH" },
+    { id: "C003", name: "Manufacturing Co. India", location: "Bengaluru, KA" },
+    { id: "C004", name: "Logistics Plus India", location: "Hyderabad, TS" },
+  ];
+
+  const transporters = [
+    {
+      id: "T001",
+      name: "FastTrack Logistics",
+      rating: 4.8,
+      modes: ["truck", "air"],
+      evFleet: true,
+    },
+    {
+      id: "T002",
+      name: "Ocean Express",
+      rating: 4.6,
+      modes: ["ship", "truck"],
+      evFleet: false,
+    },
+    {
+      id: "T003",
+      name: "Green Transport",
+      rating: 4.9,
+      modes: ["truck", "ev"],
+      evFleet: true,
+    },
+  ];
+
+  const suppliers = [
+    {
+      id: "S001",
+      name: "TechCorp India Pvt Ltd",
+      rating: 4.8,
+      specialties: ["Electronics", "Software", "Hardware"],
+      location: "New Delhi",
+      deliveryTime: "2-3 days",
+      minOrder: 500,
+      ecoFriendly: true,
+      certifications: ["ISO 9001", "Green Certified"],
+      totalOrders: 1247,
+      onTimeRate: 96
+    },
+    {
+      id: "S002",
+      name: "Global Retail India",
+      rating: 4.6,
+      specialties: ["Consumer Goods", "Fashion", "Home & Garden"],
+      location: "Mumbai",
+      deliveryTime: "3-5 days",
+      minOrder: 300,
+      ecoFriendly: false,
+      certifications: ["ISO 9001"],
+      totalOrders: 892,
+      onTimeRate: 92
+    },
+    {
+      id: "S003",
+      name: "Manufacturing Co. India",
+      rating: 4.7,
+      specialties: ["Industrial Equipment", "Automotive Parts", "Machinery"],
+      location: "Bengaluru",
+      deliveryTime: "5-7 days",
+      minOrder: 1000,
+      ecoFriendly: true,
+      certifications: ["ISO 9001", "ISO 14001", "Green Certified"],
+      totalOrders: 634,
+      onTimeRate: 94
+    },
+    {
+      id: "S004",
+      name: "Logistics Plus India",
+      rating: 4.9,
+      specialties: ["Logistics Services", "Warehousing", "Distribution"],
+      location: "Hyderabad",
+      deliveryTime: "1-2 days",
+      minOrder: 200,
+      ecoFriendly: true,
+      certifications: ["ISO 9001", "Green Certified", "Carbon Neutral"],
+      totalOrders: 2156,
+      onTimeRate: 98
+    }
+  ];
+
+  if (!currentUser) {
+    return (
+      <div className="relative min-h-screen overflow-hidden">
+        {/* Animated dark SVG background */}
+        <div className="absolute inset-0 bg-[#0b0f19]">
+          <svg
+            className="absolute inset-0 w-full h-full opacity-70"
+            xmlns="http://www.w3.org/2000/svg"
+            preserveAspectRatio="xMidYMid slice"
+            viewBox="0 0 1600 900"
+          >
+            <defs>
+              <radialGradient id="g1" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.35" />
+                <stop offset="100%" stopColor="#0b0f19" stopOpacity="0" />
+              </radialGradient>
+              <radialGradient id="g2" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
+                <stop offset="100%" stopColor="#0b0f19" stopOpacity="0" />
+              </radialGradient>
+              <radialGradient id="g3" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.25" />
+                <stop offset="100%" stopColor="#0b0f19" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            <circle cx="200" cy="200" r="320" fill="url(#g1)">
+              <animate
+                attributeName="cx"
+                values="200;1400;200"
+                dur="24s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="cy"
+                values="200;700;200"
+                dur="32s"
+                repeatCount="indefinite"
+              />
+            </circle>
+            <circle cx="1200" cy="300" r="380" fill="url(#g2)">
+              <animate
+                attributeName="cx"
+                values="1200;300;1200"
+                dur="28s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="cy"
+                values="300;800;300"
+                dur="36s"
+                repeatCount="indefinite"
+              />
+            </circle>
+            <circle cx="800" cy="600" r="300" fill="url(#g3)">
+              <animate
+                attributeName="cx"
+                values="800;200;800"
+                dur="26s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="cy"
+                values="600;200;600"
+                dur="34s"
+                repeatCount="indefinite"
+              />
+            </circle>
+
+            {/* Floating particle field */}
+            <g opacity="0.55">
+              <circle cx="100" cy="120" r="2" fill="#ffffff">
+                <animate
+                  attributeName="cx"
+                  values="100;1500;100"
+                  dur="40s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="120;820;120"
+                  dur="52s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="300" cy="500" r="1.8" fill="#e2e8f0">
+                <animate
+                  attributeName="cx"
+                  values="300;50;300"
+                  dur="48s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="500;200;500"
+                  dur="44s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="620" cy="240" r="2.2" fill="#cbd5e1">
+                <animate
+                  attributeName="cx"
+                  values="620;1000;620"
+                  dur="50s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="240;780;240"
+                  dur="38s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="940" cy="740" r="1.6" fill="#94a3b8">
+                <animate
+                  attributeName="cx"
+                  values="940;200;940"
+                  dur="46s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="740;120;740"
+                  dur="58s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="1300" cy="420" r="2.1" fill="#e5e7eb">
+                <animate
+                  attributeName="cx"
+                  values="1300;400;1300"
+                  dur="42s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="420;860;420"
+                  dur="47s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="1500" cy="180" r="1.4" fill="#ffffff">
+                <animate
+                  attributeName="cx"
+                  values="1500;200;1500"
+                  dur="54s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="180;780;180"
+                  dur="41s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="420" cy="860" r="1.8" fill="#d1d5db">
+                <animate
+                  attributeName="cx"
+                  values="420;1200;420"
+                  dur="57s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="860;200;860"
+                  dur="49s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="760" cy="60" r="1.7" fill="#f1f5f9">
+                <animate
+                  attributeName="cx"
+                  values="760;100;760"
+                  dur="45s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="60;880;60"
+                  dur="53s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="80" cy="700" r="1.5" fill="#ffffff">
+                <animate
+                  attributeName="cx"
+                  values="80;900;80"
+                  dur="51s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="700;150;700"
+                  dur="39s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle cx="1120" cy="520" r="2" fill="#e2e8f0">
+                <animate
+                  attributeName="cx"
+                  values="1120;300;1120"
+                  dur="43s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="cy"
+                  values="520;840;520"
+                  dur="55s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            </g>
+          </svg>
+          <div className="absolute inset-0 backdrop-blur-[2px]" />
+        </div>
+
+        <div className="relative z-10 grid min-h-screen grid-cols-1 lg:grid-cols-12">
+          {/* Left: features */}
+          <div className="hidden lg:flex lg:col-span-7 items-start justify-center p-10">
+            <div className="max-w-2xl text-white">
+              <div className="flex items-center gap-6 mb-8 mt-10">
+                <Image
+                  src="/images/logo.png"
+                  alt="FlexMove"
+                  width={128}
+                  height={128}
+                />
+                <div className="flex items-center gap-2 select-none">
+                  <span className="text-white text-6xl font-extrabold leading-none drop-shadow-[0_0_10px_rgba(255,255,255,0.8)]">
+                    Flex
+                  </span>
+                  <span className="text-emerald-400 text-6xl font-extrabold leading-none drop-shadow-[0_0_10px_rgba(16,185,129,0.8)]">
+                    Move
+                  </span>
+                </div>
+              </div>
+
+              <h1 className="text-blue-500 text-4xl leading-tight font-extrabold tracking-tight sm:text-5xl">
+                Manage your supply chain with confidence
+              </h1>
+              <p className="mt-3 text-lg text-white/70 max-w-prose">
+                FlexMove connects suppliers, transporters, and customers with
+                real-time visibility and optimization.
+              </p>
+              <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div className="flex items-start gap-3">
+                  <MapPin className="h-6 w-6 text-sky-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-orange-300">Live Tracking</div>
+                    <div className="text-white/80 text-sm">Real-time routes, ETAs, and disruption alerts.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <BarChart3 className="h-6 w-6 text-emerald-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-emerald-300">Analytics</div>
+                    <div className="text-white/80 text-sm">Performance, costs, and sustainability insights.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Package className="h-6 w-6 text-violet-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-yellow-300">Smart Logistics</div>
+                    <div className="text-white/80 text-sm">Optimize routes and reduce delays automatically.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Leaf className="h-6 w-6 text-lime-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-lime-300">Sustainability</div>
+                    <div className="text-white/80 text-sm">Track carbon footprint and EV adoption.</div>
+                  </div>
+                </div>
+
+                {/* New Features */}
+                <div className="flex items-start gap-3">
+                  <Truck className="h-6 w-6 text-red-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-red-300">Fleet Management</div>
+                    <div className="text-white/80 text-sm">Efficient scheduling and vehicle tracking.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Shield className="h-6 w-6 text-indigo-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-indigo-300">Security</div>
+                    <div className="text-white/80 text-sm">Ensure data protection and transport safety.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <User className="h-6 w-6 text-pink-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-pink-300">Customer Support</div>
+                    <div className="text-white/80 text-sm">24/7 assistance for users and stakeholders.</div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Zap className="h-6 w-6 text-yellow-400 flex-shrink-0" />
+                  <div>
+                    <div className="font-extrabold text-xl text-yellow-300">Automation</div>
+                    <div className="text-white/80 text-sm">Reduce manual tasks with smart workflows.</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Right: form */}
+          <div className="col-span-1 lg:col-span-5 flex items-center justify-center p-6 sm:p-10">
+            <div className="w-full max-w-md">
+              <div className="mb-8 text-white lg:hidden">
+                <div className="flex items-center gap-3">
+                  <Image
+                    src="/images/logo.png"
+                    alt="FlexMove"
+                    width={120}
+                    height={48}
+                  />
+                  <div className="flex items-baseline gap-1 select-none">
+                    <span className="text-white text-2xl font-extrabold leading-none">
+                      Flex
+                    </span>
+                    <span className="text-emerald-400 text-2xl font-extrabold leading-none">
+                      Move
+                    </span>
+                  </div>
+                </div>
+                <h2 className="mt-6 text-3xl font-extrabold tracking-tight">
+                  Welcome to FlexMove
+                </h2>
+                <p className="mt-2 text-white/70">
+                  Connect suppliers, transporters, and customers
+                </p>
+              </div>
+
+              <Card className="bg-white/10 border-white/20 text-white backdrop-blur-md shadow-2xl">
+                <CardHeader>
+                  <CardTitle className="text-emarald-300 text-2xl font-extrabold">
+                    {isLogin ? "Sign In" : "Create your account"}
+                  </CardTitle>
+                  <CardDescription className="text-white/70">
+                    {isLogin
+                      ? "Access your dashboard"
+                      : "Start your journey with FlexMove"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  {!isLogin && (
+                    <div className="space-y-2">
+                      <Label
+                        htmlFor="fullName"
+                        className="text-white/90 font-semibold"
+                      >
+                        Full Name
+                      </Label>
+                      <Input
+                        id="fullName"
+                        placeholder="Enter your full name"
+                        className="bg-white/5 border-white/20 placeholder:text-white/60"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="email"
+                      className="text-white/90 font-semibold"
+                    >
+                      Email
+                    </Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="Enter your email"
+                      className="bg-white/5 border-white/20 placeholder:text-white"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="password"
+                      className="text-white/90 font-semibold"
+                    >
+                      Password
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your password"
+                        className="bg-white/5 border-white/20 placeholder:text-white pr-12"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="absolute inset-y-0 right-0 px-3 text-white/80 hover:text-white text-sm"
+                        onClick={() => setShowPassword((v) => !v)}
+                      >
+                        {showPassword ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                    {!isLogin && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-white/70">
+                            Password strength
+                          </span>
+                          <span className="text-white/80 font-semibold">
+                            {password.length >= 12
+                              ? "Strong"
+                              : password.length >= 8
+                                ? "Medium"
+                                : password.length > 0
+                                  ? "Weak"
+                                  : ""}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full rounded bg-white/10 overflow-hidden">
+                          <div
+                            className={`${password.length >= 12
+                              ? "bg-emerald-400 w-[100%]"
+                              : password.length >= 8
+                                ? "bg-yellow-300 w-[66%]"
+                                : password.length > 0
+                                  ? "bg-rose-400 w-[33%]"
+                                  : "w-0"
+                              } h-full transition-all`}
+                          ></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-white/90 font-semibold">
+                      Select Your Role
+                    </Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRole("supplier")}
+                        className={`flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-700 rounded-md border px-3 py-2 text-sm transition-transform transform ${role === "supplier"
+                          ? "border-emerald-400 bg-emerald-400/10 text-white"
+                          : "border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:scale-105 active:scale-95"
+                          }`}
+                        aria-pressed={role === "supplier"}
+                      >
+                        <Package className="h-4 w-4" />
+                        Supplier
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRole("transporter")}
+                        className={`flex items-center justify-center gap-2 bg-gradient-to-r from-green-600 via-teal-600 to-cyan-700 rounded-md border px-3 py-2 text-sm transition-transform transform ${role === "transporter"
+                          ? "border-emerald-400 bg-emerald-400/10 text-white"
+                          : "border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:scale-105 active:scale-95"
+                          }`}
+                        aria-pressed={role === "transporter"}
+                      >
+                        <Truck className="h-4 w-4" />
+                        Transporter
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRole("customer")}
+                        className={`flex items-center justify-center gap-2 rounded-md border bg-gradient-to-r from-purple-600 via-pink-600 to-rose-700 px-3 py-2 text-sm transition-transform transform ${role === "customer"
+                          ? "border-emerald-400 bg-emerald-400/10 text-white"
+                          : "border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:scale-105 active:scale-95"
+                          }`}
+                        aria-pressed={role === "customer"}
+                      >
+                        <MapPin className="h-4 w-4" />
+                        Customer
+                      </button>
+                    </div>
+
+                  </div>
+                  {authError && (
+                    <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-white text-sm">
+                      {authError}
+                    </div>
+                  )}
+                  {showResendVerification && (
+                    <div className="p-3 rounded-lg bg-blue-500/20 border border-blue-500/50 text-white text-sm">
+                      <p className="mb-2">Need to verify your email?</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={handleResendVerification}
+                        disabled={authLoading}
+                      >
+                        {authLoading ? 'Sending...' : 'Resend Verification Email'}
+                      </Button>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-white/80 text-sm select-none">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-white/30 bg-transparent"
+                        defaultChecked
+                      />
+                      Remember me
+                    </label>
+                    <button className="text-sm text-sky-300 hover:text-sky-200">
+                      Forgot password?
+                    </button>
+                  </div>
+                  <Button
+                    className="w-full font-bold text-base"
+                    onClick={async () => {
+                      if (!email || !password || !role) {
+                        setAuthError('Please fill in all required fields');
+                        return;
+                      }
+
+                      // Validate role for signup
+                      if (!isLogin && role === 'admin') {
+                        setAuthError('Cannot create admin accounts through signup');
+                        return;
+                      }
+
+                      if (isLogin) {
+                        await handleLogin(email, password);
+                      } else {
+                        if (!fullName) {
+                          setAuthError('Please enter your full name');
+                          return;
+                        }
+                        await handleSignup({
+                          email,
+                          password,
+                          name: fullName,
+                          role: role as 'supplier' | 'transporter' | 'customer',
+                        });
+                      }
+                    }}
+                    disabled={!role || !email || !password || authLoading}
+                  >
+                    {authLoading ? 'Please wait...' : (isLogin ? "Sign In" : "Create Account")}
+                  </Button>
+                  <div className="text-center">
+                    <button
+                      onClick={() => setIsLogin(!isLogin)}
+                      className="text-sm font-semibold text-primary hover:underline"
+                    >
+                      {isLogin
+                        ? "Don't have an account? Sign up"
+                        : "Already have an account? Sign in"}
+                    </button>
+                  </div>
+                  {!isLogin && (
+                    <div className="text-xs text-white/70 text-center">
+                      By creating an account, you agree to our{" "}
+                      <span className="text-emerald-300 font-semibold">
+                        Terms
+                      </span>{" "}
+                      and{" "}
+                      <span className="text-emerald-300 font-semibold">
+                        Privacy Policy
+                      </span>
+                      .
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Demo Login Buttons */}
+              <Card className="mt-6 bg-white/10 border-white/20 text-white backdrop-blur-md">
+                <CardHeader>
+                  <CardTitle className="text-base font-bold">
+                    Demo Access
+                  </CardTitle>
+                  <CardDescription className="text-white/70">
+                    Try the platform with different roles
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Button
+                    variant="outline"
+                    className="btn-glow w-full justify-start bg-transparent border-white/20 text-white hover:bg-white/10"
+                    onClick={() => {
+                      setCurrentUser("supplier");
+                      const params = new URLSearchParams(searchParams.toString());
+                      params.set('user', 'supplier');
+                      router.push(`?${params.toString()}`);
+                      addNotification('info', 'Demo Mode', 'Logged in as Supplier (Demo)');
+                    }}
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    Demo as Supplier
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="btn-glow w-full justify-start bg-transparent border-white/20 text-white hover:bg-white/10"
+                    onClick={() => {
+                      setCurrentUser("transporter");
+                      const params = new URLSearchParams(searchParams.toString());
+                      params.set('user', 'transporter');
+                      router.push(`?${params.toString()}`);
+                      addNotification('info', 'Demo Mode', 'Logged in as Transporter (Demo)');
+                    }}
+                  >
+                    <Truck className="h-4 w-4 mr-2" />
+                    Demo as Transporter
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="btn-glow w-full justify-start bg-transparent border-white/20 text-white hover:bg-white/10"
+                    onClick={() => {
+                      setCurrentUser("customer");
+                      const params = new URLSearchParams(searchParams.toString());
+                      params.set('user', 'customer');
+                      router.push(`?${params.toString()}`);
+                      addNotification('info', 'Demo Mode', 'Logged in as Customer (Demo)');
+                    }}
+                  >
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Demo as Customer
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn(
+      "min-h-screen transition-all duration-300",
+      isDarkMode ? "bg-gradient-to-br from-slate-950 to-slate-900" : "bg-gradient-to-br from-gray-50 to-gray-100",
+      isChatbotOpen && "lg:mr-[450px]"
+    )}>
+      {/* Header */}
+      <header className={cn(
+        "border-b bg-card dark:bg-slate-900/95 dark:border-slate-800 sticky top-0 z-40 backdrop-blur-sm bg-opacity-95 transition-all duration-300"
+      )}>
+        <div className="flex h-14 sm:h-16 items-center justify-between px-3 sm:px-6">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Image
+              src="/images/logo.png"
+              alt="FlexMove"
+              width={120}
+              height={40}
+              className="h-6 sm:h-8 w-auto"
+            />
+            <div className="flex items-baseline gap-1 select-none">
+              <span className="text-foreground dark:text-white text-lg sm:text-xl font-extrabold leading-none">
+                Flex
+              </span>
+              <span className="text-emerald-600 dark:text-emerald-400 text-lg sm:text-xl font-extrabold leading-none">
+                Move
+              </span>
+            </div>
+            <div className="hidden md:block ml-4 text-sm text-muted-foreground dark:text-slate-400">
+              {currentUser === "supplier" && "Supplier Dashboard"}
+              {currentUser === "transporter" && "Transporter Dashboard"}
+              {currentUser === "customer" && "Customer Dashboard"}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Dark Mode Toggle */}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="rounded-full border-2 hover:scale-105 transition-all duration-300 h-9 w-9 sm:h-10 sm:w-10"
+            >
+              {isDarkMode ? (
+                <Sun className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-500" />
+              ) : (
+                <Moon className="h-4 w-4 sm:h-5 sm:w-5 text-slate-700" />
+              )}
+            </Button>
+
+            <Button
+              variant="default"
+              onClick={() => setIsChatbotOpen(!isChatbotOpen)}
+              className="hidden md:inline-flex relative bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 hover:from-blue-700 hover:via-purple-700 hover:to-blue-700 text-white font-bold shadow-xl items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2 sm:py-2.5 rounded-full border-2 border-white/30 group overflow-hidden transition-all duration-300 hover:shadow-2xl hover:scale-105"
+            >
+              {/* Animated background glow */}
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-purple-400 to-blue-400 opacity-0 group-hover:opacity-50 blur-xl transition-opacity duration-300"></div>
+
+              {/* Sparkle effect */}
+              <div className="absolute top-0 left-0 w-full h-full">
+                <div className="absolute top-1 left-4 w-1 h-1 bg-white rounded-full animate-ping"></div>
+                <div className="absolute top-3 right-6 w-1 h-1 bg-white rounded-full animate-ping" style={{ animationDelay: '0.5s' }}></div>
+              </div>
+
+              {/* Content */}
+              <Sparkles className="h-4 w-4 sm:h-5 sm:w-5 relative z-10 animate-pulse" />
+              <span className="relative z-10 text-sm sm:text-base"><span className="hidden sm:inline">Ask </span>Flexify</span>
+
+              {/* Active indicator */}
+              {isChatbotOpen && (
+                <span className="absolute -top-1 -right-1 h-3 w-3 bg-green-400 rounded-full border-2 border-white animate-pulse shadow-lg z-20"></span>
+              )}
+            </Button>
+            <Button variant="outline" onClick={handleLogout} className="btn-glow">
+              Sign Out
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Dashboard Content */}
+      <main className="container mx-auto max-w-screen-2xl p-3 sm:p-4 md:p-6 pb-24 sm:pb-6">
+        {currentUser === "supplier" && (
+          <SupplierDashboard
+            onCreateShipment={handleCreateShipment}
+            onDisruptionAction={handleDisruptionAction}
+            onRerouteRequest={handleRerouteRequest}
+            shipments={globalShipments}
+            disruptions={globalDisruptions}
+            onAIInsights={handleAIInsights}
+            currentTab={currentTab}
+            onTabChange={setCurrentTab}
+          />
+        )}
+        {currentUser === "transporter" && (
+          <TransporterDashboard
+            onRequestAction={handleRequestAction}
+            onShipmentStatusUpdate={handleShipmentStatusUpdate}
+            shipments={globalShipments}
+            onAIInsights={handleAIInsights}
+            dbShipments={dbShipments}
+            dbSuppliers={dbSuppliers}
+            dbTransporters={dbTransporters}
+            dbUpdateShipment={dbUpdateShipment}
+            currentTab={currentTab}
+            onTabChange={setCurrentTab}
+          />
+        )}
+        {currentUser === "customer" && (
+          <CustomerDashboard
+            onRatingSubmit={handleRatingSubmit}
+            onNewOrder={handleNewOrder}
+            shipments={globalShipments}
+            suppliers={suppliers}
+            onAIInsights={handleAIInsights}
+            currentTab={currentTab}
+            onTabChange={setCurrentTab}
+          />
+        )}
+      </main>
+
+      {/* Notification System */}
+      <div className="fixed top-16 sm:top-4 right-2 sm:right-4 z-50 space-y-2 max-w-[calc(100vw-1rem)] sm:max-w-sm">
+        {notifications.map((notification) => (
+          <div
+            key={notification.id}
+            className={`p-4 rounded-lg shadow-lg border-l-4 max-w-sm animate-in slide-in-from-right-full duration-300 ${notification.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 border-green-500 dark:border-green-700 text-green-800 dark:text-green-300' :
+              notification.type === 'error' ? 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-700 text-red-800 dark:text-red-300' :
+                notification.type === 'warning' ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500 dark:border-yellow-700 text-yellow-800 dark:text-yellow-300' :
+                  'bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-700 text-blue-800 dark:text-blue-300'
+              }`}
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <h4 className="font-semibold text-sm">{notification.title}</h4>
+                <p className="text-sm mt-1">{notification.message}</p>
+                <p className="text-xs mt-2 opacity-75">
+                  {notification.timestamp.toLocaleTimeString()}
+                </p>
+              </div>
+              <button
+                onClick={() => removeNotification(notification.id)}
+                className="ml-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile FAB for Chatbot */}
+      <button
+        onClick={() => setIsChatbotOpen(true)}
+        aria-label="Ask Flexify"
+        className="sm:hidden fixed bottom-20 right-4 z-40 h-12 w-12 rounded-full bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 text-white shadow-2xl border-2 border-white/30 flex items-center justify-center active:scale-95"
+      >
+        <Sparkles className="h-5 w-5" />
+      </button>
+
+      {/* Create Shipment Modal */}
+      {showCreateShipment && (
+        <CreateShipmentForm
+          customers={customers}
+          transporters={transporters}
+          step={createShipmentStep}
+          selectedCustomer={selectedCustomer}
+          selectedTransporter={selectedTransporter}
+          formData={shipmentFormData}
+          onCustomerSelected={handleCustomerSelected}
+          onTransporterSelected={handleTransporterSelected}
+          onFormDataChange={setShipmentFormData}
+          onShipmentCreated={handleShipmentCreated}
+          onClose={() => {
+            setShowCreateShipment(false);
+            setCreateShipmentStep('customer');
+            setSelectedCustomer('');
+            setSelectedTransporter('');
+            setShipmentFormData({
+              origin: '',
+              destination: '',
+              weight: '',
+              priority: '',
+              mode: ''
+            });
+          }} />
+      )}
+
+      {/* Reroute Dialog */}
+      {showRerouteDialog && selectedDisruption && (
+        <RerouteDialog
+          disruption={selectedDisruption}
+          availableRoutes={availableRoutes}
+          onRouteSelection={handleRouteSelection}
+          onClose={() => {
+            setShowRerouteDialog(false);
+            setSelectedDisruption(null);
+          }}
+        />
+      )}
+
+      {/* New Order Dialog */}
+      {showNewOrderDialog && (
+        <NewOrderDialog
+          suppliers={suppliers}
+          selectedSupplier={selectedSupplier}
+          formData={orderFormData}
+          onSupplierSelection={handleSupplierSelection}
+          onFormDataChange={setOrderFormData}
+          onSubmit={handleOrderSubmit}
+          onClose={() => {
+            setShowNewOrderDialog(false);
+            setSelectedSupplier('');
+            setOrderFormData({
+              product: '',
+              quantity: '',
+              priority: '',
+              deliveryDate: '',
+              specialInstructions: ''
+            });
+          }}
+        />
+      )}
+
+      {/* AI Chatbot */}
+      <Chatbot
+        userRole={currentUser}
+        shipments={globalShipments}
+        disruptions={globalDisruptions}
+        autoOpenWithContext={chatbotContext || undefined}
+        isOpen={isChatbotOpen}
+        onClose={() => setIsChatbotOpen(false)}
+      />
+    </div>
+  );
+}
+
+import { CreateShipmentForm } from "@/components/create-shipment-form";
+import { Header } from "@radix-ui/react-accordion";
+
+// Reroute Dialog Component
+function RerouteDialog({
+  disruption,
+  availableRoutes,
+  onRouteSelection,
+  onClose
+}: {
+  disruption: DisruptionAlert;
+  availableRoutes: Array<{
+    id: string;
+    name: string;
+    distance: number;
+    estimatedTime: string;
+    cost: number;
+    carbonFootprint: number;
+    riskLevel: 'low' | 'medium' | 'high';
+    status: 'available' | 'congested' | 'delayed';
+  }>;
+  onRouteSelection: (routeId: string) => void;
+  onClose: () => void;
+}) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'available': return 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800';
+      case 'congested': return 'text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800';
+      case 'delayed': return 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800';
+      default: return 'text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-700';
+    }
+  };
+
+  const getRiskColor = (risk: string) => {
+    switch (risk) {
+      case 'low': return 'text-green-600';
+      case 'medium': return 'text-yellow-600';
+      case 'high': return 'text-red-600';
+      default: return 'text-gray-600';
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <MapPin className="h-6 w-6 text-blue-600" />
+              <span>Reroute Shipment</span>
+            </div>
+            <Button variant="ghost" onClick={onClose}>
+              ×
+            </Button>
+          </CardTitle>
+          <CardDescription>
+            Disruption: {disruption.type} - {disruption.description}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600 mb-4">
+              <strong>Shipment ID:</strong> {disruption.shipmentId} |
+              <strong className="ml-2">Delay:</strong> {disruption.delay}
+            </div>
+
+            <div className="grid gap-4">
+              {availableRoutes.map((route) => (
+                <div
+                  key={route.id}
+                  className={`p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md ${route.status === 'available'
+                    ? 'border-green-200 hover:border-green-300'
+                    : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  onClick={() => route.status === 'available' && onRouteSelection(route.id)}
+                >
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h4 className="font-semibold text-lg">{route.name}</h4>
+                        <Badge className={getStatusColor(route.status)}>
+                          {route.status}
+                        </Badge>
+                        <Badge variant="outline" className={getRiskColor(route.riskLevel)}>
+                          Risk: {route.riskLevel}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-4 w-4 text-blue-600" />
+                          <span>{route.distance} km</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-green-600" />
+                          <span>{route.estimatedTime}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="h-4 w-4 text-green-600" />
+                          <span>{formatCurrencyINR(route.cost)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Leaf className="h-4 w-4 text-green-600" />
+                          <span>{route.carbonFootprint}kg CO₂</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {route.status === 'available' && (
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRouteSelection(route.id);
+                        }}
+                        className="w-full md:w-auto md:ml-4 bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        Select Route
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// New Order Dialog Component
+function NewOrderDialog({
+  suppliers,
+  selectedSupplier,
+  formData,
+  onSupplierSelection,
+  onFormDataChange,
+  onSubmit,
+  onClose
+}: {
+  suppliers: Array<{
+    id: string;
+    name: string;
+    rating: number;
+    specialties: string[];
+    location: string;
+    deliveryTime: string;
+    minOrder: number;
+    ecoFriendly: boolean;
+    certifications: string[];
+    totalOrders: number;
+    onTimeRate: number;
+  }>;
+  selectedSupplier: string;
+  formData: {
+    product: string;
+    quantity: string;
+    priority: string;
+    deliveryDate: string;
+    specialInstructions: string;
+  };
+  onSupplierSelection: (supplierId: string) => void;
+  onFormDataChange: (data: any) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const selectedSupplierData = suppliers.find(s => s.id === selectedSupplier);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Plus className="h-6 w-6 text-purple-600" />
+              <span>Place New Order</span>
+            </div>
+            <Button variant="ghost" onClick={onClose}>
+              ×
+            </Button>
+          </CardTitle>
+          <CardDescription>
+            Select a supplier and provide order details
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-6">
+            {/* Supplier Selection */}
+            <div>
+              <Label className="text-lg font-semibold mb-4 block">Select Supplier</Label>
+              <div className="grid gap-4">
+                {suppliers.map((supplier) => (
+                  <div
+                    key={supplier.id}
+                    className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedSupplier === supplier.id
+                      ? 'border-purple-500 dark:border-purple-700 bg-purple-50 dark:bg-purple-900/20'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                      }`}
+                    onClick={() => onSupplierSelection(supplier.id)}
+                  >
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h4 className="font-semibold text-lg">{supplier.name}</h4>
+                          <Badge variant="outline" className="text-yellow-600 border-yellow-300">
+                            ⭐ {supplier.rating}/5
+                          </Badge>
+                          {supplier.ecoFriendly && (
+                            <Badge variant="outline" className="text-green-600 border-green-300">
+                              <Leaf className="h-3 w-3 mr-1" />
+                              Eco-Friendly
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-3">
+                          <div>
+                            <span className="font-medium">Location:</span> {supplier.location}
+                          </div>
+                          <div>
+                            <span className="font-medium">Delivery:</span> {supplier.deliveryTime}
+                          </div>
+                          <div>
+                            <span className="font-medium">Min Order:</span> {formatCurrencyINR(supplier.minOrder)}
+                          </div>
+                          <div>
+                            <span className="font-medium">On-Time Rate:</span> {supplier.onTimeRate}%
+                          </div>
+                        </div>
+
+                        <div className="text-sm mb-2">
+                          <span className="font-medium">Specialties:</span> {supplier.specialties.join(', ')}
+                        </div>
+
+                        <div className="text-sm">
+                          <span className="font-medium">Certifications:</span> {supplier.certifications.join(', ')}
+                        </div>
+                      </div>
+
+                      {selectedSupplier === supplier.id && (
+                        <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center self-end md:self-start md:ml-4">
+                          <span className="text-white text-sm">✓</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Order Details */}
+            {selectedSupplier && (
+              <div className="space-y-4">
+                <Label className="text-lg font-semibold">Order Details</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <Label htmlFor="product">Product/Service *</Label>
+                    <Input
+                      id="product"
+                      value={formData.product}
+                      onChange={(e) => onFormDataChange({ ...formData, product: e.target.value })}
+                      placeholder="Enter product or service name"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="quantity">Quantity *</Label>
+                    <Input
+                      id="quantity"
+                      type="number"
+                      value={formData.quantity}
+                      onChange={(e) => onFormDataChange({ ...formData, quantity: e.target.value })}
+                      placeholder="Enter quantity"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="priority">Priority</Label>
+                    <Select value={formData.priority} onValueChange={(value) => onFormDataChange({ ...formData, priority: value })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select priority" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="deliveryDate">Preferred Delivery Date</Label>
+                    <Input
+                      id="deliveryDate"
+                      type="date"
+                      value={formData.deliveryDate}
+                      onChange={(e) => onFormDataChange({ ...formData, deliveryDate: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="specialInstructions">Special Instructions</Label>
+                  <Textarea
+                    id="specialInstructions"
+                    value={formData.specialInstructions}
+                    onChange={(e) => onFormDataChange({ ...formData, specialInstructions: e.target.value })}
+                    placeholder="Any special requirements or instructions..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                onClick={onSubmit}
+                disabled={!selectedSupplier || !formData.product || !formData.quantity}
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                Place Order
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function SupplierDashboard({
+  onCreateShipment,
+  onDisruptionAction,
+  onRerouteRequest,
+  shipments = [],
+  disruptions: propDisruptions = [],
+  onAIInsights,
+  currentTab = "overview",
+  onTabChange
+}: {
+  onCreateShipment: () => void;
+  onDisruptionAction: (id: string, action: string) => void;
+  onRerouteRequest: (disruption: DisruptionAlert) => void;
+  shipments: ShipmentData[];
+  disruptions: DisruptionAlert[];
+  onAIInsights: (message: string, context?: any) => void;
+  currentTab?: string;
+  onTabChange?: (tab: string) => void;
+}) {
+  const [selectedShipment, setSelectedShipment] = useState<ShipmentData | null>(null);
+  const [activeTab, setActiveTab] = useState(currentTab);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [supplierShipments, setSupplierShipments] = useState<ShipmentData[]>([]);
+
+  // Sync with parent tab state
+  useEffect(() => {
+    setActiveTab(currentTab);
+  }, [currentTab]);
+
+  // Notify parent when tab changes
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (onTabChange) {
+      onTabChange(tab);
+    }
+  };
+
+  // Sync supplier shipments from database
+  useEffect(() => {
+    console.log('🏭 Supplier Dashboard - Syncing shipments:', shipments.length);
+    // Filter and display all shipments (supplier sees all)
+    const enrichedShipments = shipments.map(ship => {
+      console.log('🔗 Supplier shipment link:', {
+        id: ship.id,
+        customer: ship.customer,
+        transporter: ship.transporter,
+        vehicle: ship.vehicle,
+        status: ship.status
+      });
+      return ship;
+    });
+    setSupplierShipments(enrichedShipments);
+  }, [shipments]);
+
+  const customers = [
+    { id: "C001", name: "TechCorp India Pvt Ltd", location: "New Delhi, DL" },
+    { id: "C002", name: "Global Retail India", location: "Mumbai, MH" },
+    { id: "C003", name: "Manufacturing Co. India", location: "Bengaluru, KA" },
+    { id: "C004", name: "Logistics Plus India", location: "Hyderabad, TS" },
+  ];
+
+  const transporters = [
+    {
+      id: "T001",
+      name: "FastTrack Logistics",
+      rating: 4.8,
+      modes: ["truck", "air"],
+      evFleet: true,
+    },
+    {
+      id: "T002",
+      name: "Ocean Express",
+      rating: 4.6,
+      modes: ["ship", "truck"],
+      evFleet: false,
+    },
+    {
+      id: "T003",
+      name: "Sky Cargo",
+      rating: 4.9,
+      modes: ["air"],
+      evFleet: true,
+    },
+    {
+      id: "T004",
+      name: "Green Transport",
+      rating: 4.7,
+      modes: ["truck", "ev"],
+      evFleet: true,
+    },
+  ];
+
+
+  // Supplier analytics datasets
+  const supplierModeSplit = [
+    { name: "Truck", value: 48, color: "#3b82f6" },
+    { name: "Ship", value: 22, color: "#14b8a6" },
+    { name: "Air", value: 18, color: "#8b5cf6" },
+    { name: "EV", value: 12, color: "#22c55e" },
+  ];
+
+  const supplierMonthlyCosts = [
+    { month: "Jan", cost: 12.1, carbon: 8.5 },
+    { month: "Feb", cost: 11.3, carbon: 8.1 },
+    { month: "Mar", cost: 10.7, carbon: 7.9 },
+    { month: "Apr", cost: 9.8, carbon: 7.2 },
+    { month: "May", cost: 9.2, carbon: 6.8 },
+    { month: "Jun", cost: 8.6, carbon: 6.5 },
+  ];
+
+  const supplierOnTimeSeries = [
+    { month: "Jan", rate: 88, disruptions: 12 },
+    { month: "Feb", rate: 89, disruptions: 10 },
+    { month: "Mar", rate: 91, disruptions: 8 },
+    { month: "Apr", rate: 92, disruptions: 7 },
+    { month: "May", rate: 94, disruptions: 5 },
+    { month: "Jun", rate: 95, disruptions: 4 },
+  ];
+
+  const costBreakdownData = [
+    { name: 'Fuel', value: 40, color: '#ef4444' },
+    { name: 'Labor', value: 30, color: '#f97316' },
+    { name: 'Maintenance', value: 15, color: '#eab308' },
+    { name: 'Overhead', value: 10, color: '#84cc16' },
+    { name: 'Fees', value: 5, color: '#14b8a6' },
+  ];
+
+  const carrierPerformanceData = [
+    { name: 'FastTrack', onTime: 95, cost: 4.2, rating: 4.8 },
+    { name: 'Ocean Express', onTime: 92, cost: 3.8, rating: 4.6 },
+    { name: 'Sky Cargo', onTime: 98, cost: 5.5, rating: 4.9 },
+    { name: 'Green Transport', onTime: 94, cost: 4.0, rating: 4.7 },
+  ];
+
+  // State for disruptions with local management
+  const [localDisruptions, setLocalDisruptions] = useState<DisruptionAlert[]>([
+    {
+      id: 'DISP-001',
+      shipmentId: 'SHIP-2023-0456',
+      type: 'Severe Weather Alert',
+      description: 'Heavy rainfall causing delays on NH48 in Gujarat',
+      delay: '12-24 hours',
+      status: 'active',
+      severity: 'high',
+      location: 'NH48, GJ',
+      timestamp: new Date(Date.now() - 3600000 * 2).toISOString(), // 2 hours ago
+      suggestions: ['Reroute shipment', 'Delay delivery', 'Contact customer']
+    },
+    {
+      id: 'DISP-002',
+      shipmentId: 'SHIP-2023-0457',
+      type: 'Mechanical Failure',
+      description: 'Truck breakdown - waiting for repair service',
+      delay: '6-8 hours',
+      status: 'in-progress',
+      severity: 'medium',
+      location: 'Nagpur, MH',
+      timestamp: new Date(Date.now() - 3600000 * 1).toISOString(), // 1 hour ago
+      suggestions: ['Arrange backup vehicle', 'Update ETA', 'Contact repair service']
+    },
+    {
+      id: 'DISP-003',
+      shipmentId: 'SHIP-2023-0458',
+      type: 'Port Congestion',
+      description: 'Unloading delays at JNPT (Jawaharlal Nehru Port Trust)',
+      delay: '24-48 hours',
+      status: 'monitoring',
+      severity: 'high',
+      location: 'Navi Mumbai, MH',
+      timestamp: new Date(Date.now() - 3600000 * 4).toISOString(), // 4 hours ago
+      suggestions: ['Reroute to alternate port', 'Update customer', 'Monitor situation']
+    },
+    ...propDisruptions // Include any disruptions passed as props
+  ]);
+
+  const handleDisruptionAction = (disruptionId: string, action: string) => {
+    // Call the parent handler if provided
+    if (onDisruptionAction) {
+      onDisruptionAction(disruptionId, action);
+    }
+
+    // Update local state
+    setLocalDisruptions(currentDisruptions => {
+      // If resolving, filter out the resolved disruption
+      if (action === 'resolve') {
+        return currentDisruptions.filter(d => d.id !== disruptionId);
+      }
+
+      // For other actions, update the disruption
+      return currentDisruptions.map(disruption => {
+        if (disruption.id === disruptionId) {
+          // Handle different actions
+          switch (action) {
+            case 'acknowledge':
+              return { ...disruption, status: 'acknowledged' };
+            case 'escalate':
+              return { ...disruption, status: 'escalated', escalatedAt: new Date().toISOString() };
+            case 'customer_updated':
+              // In a real app, you might add a property like lastCustomerUpdate
+              return disruption;
+            default:
+              return disruption;
+          }
+        }
+        return disruption;
+      });
+    });
+  };
+
+  const handleReroute = (disruption: DisruptionAlert) => {
+    if (onRerouteRequest) {
+      onRerouteRequest(disruption);
+    }
+    // Show success message or update UI
+    console.log(`Rerouting shipment ${disruption.shipmentId}...`);
+  };
+
+  const handleUpdateCustomer = (disruption: DisruptionAlert) => {
+    // In a real app, this would open a customer communication interface
+    console.log(`Updating customer about shipment ${disruption.shipmentId}...`);
+    handleDisruptionAction(disruption.id, 'customer_updated');
+  };
+
+  // Custom label renderer for Pie Charts
+  const RADIAN = Math.PI / 180;
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+    const radius = outerRadius + 30; // space for the label
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="currentColor"
+        className="text-xs"
+        textAnchor={x > cx ? 'start' : 'end'}
+        dominantBaseline="central"
+      >
+        {`${name} (${(percent * 100).toFixed(0)}%)`}
+      </text>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Main Content */}
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-700 p-4 sm:p-6 md:p-8 text-white">
+        <div className="absolute inset-0 bg-black/20"></div>
+        <div className="relative z-10">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 dark:text-white">Supplier Dashboard</h1>
+              <p className="text-blue-100 dark:text-slate-300 text-sm sm:text-base md:text-lg">Manage your supply chain operations with confidence</p>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:gap-3">
+              <Button
+                onClick={onCreateShipment}
+                className="bg-white/20 hover:bg-white/30 dark:bg-white/10 dark:hover:bg-white/20 text-white border-white/30 backdrop-blur-sm transition-all duration-200 hover:scale-105 text-sm sm:text-base"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Create </span>Shipment
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setActiveTab("analytics")}
+                className="bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/15 text-white border-white/30 backdrop-blur-sm text-sm sm:text-base"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Analytics</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full"></div>
+        <div className="absolute -bottom-5 -left-5 w-32 h-32 bg-white/5 rounded-full"></div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList className="flex w-full overflow-x-auto gap-1 mb-6 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 p-1 rounded-lg border dark:border-slate-700 sm:grid sm:grid-cols-3 md:grid-cols-5">
+          <TabsTrigger
+            value="overview"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Package className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Overview</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="operations"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-purple-600 dark:data-[state=active]:text-purple-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Truck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Operations</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="disruptions"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-red-600 dark:data-[state=active]:text-red-400 dark:text-slate-300 font-semibold transition-all duration-200 relative text-xs sm:text-sm col-span-2 sm:col-span-1"
+          >
+            <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Disruptions</span>
+            {localDisruptions.length > 0 && (
+              <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white">
+                {localDisruptions.length}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger
+            value="analytics"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Analytics</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="settings"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-orange-600 dark:data-[state=active]:text-orange-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Settings className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Settings</span>
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="space-y-6">
+          {/* Flexify AI Status Banner */}
+          <div className="bg-gradient-to-r from-blue-600 via-blue-500 to-blue-600 text-white rounded-xl p-3 sm:p-4 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm flex-shrink-0">
+                <Sparkles className="h-4 w-4 sm:h-5 sm:w-5" />
+              </div>
+              <div>
+                <div className="font-bold text-base sm:text-lg">Flexify AI Active</div>
+                <div className="text-xs sm:text-sm opacity-90">Monitoring your supply chain in real-time • Ask anything, anytime</div>
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 font-bold shadow-md w-full sm:w-auto text-sm"
+              onClick={() => onAIInsights("What's my supply chain status right now?")}
+            >
+              Quick Insight
+            </Button>
+          </div>
+
+          {/* Enhanced Stats Cards */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 border-blue-200 dark:border-blue-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                  Active Shipments
+                </CardTitle>
+                <div className="p-2 bg-blue-500 dark:bg-blue-600 rounded-lg">
+                  <Package className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-blue-800 dark:text-blue-200">24</div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">+2 from last week</p>
+                <div className="mt-2 w-full bg-blue-200 dark:bg-blue-900/40 rounded-full h-2">
+                  <div className="bg-blue-500 dark:bg-blue-400 h-2 rounded-full" style={{ width: '80%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 border-green-200 dark:border-green-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
+                  On-Time Delivery
+                </CardTitle>
+                <div className="p-2 bg-green-500 dark:bg-green-600 rounded-lg">
+                  <BarChart3 className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-green-800 dark:text-green-200">94.2%</div>
+                <p className="text-xs text-green-600 dark:text-green-400 font-medium">+1.2% from last month</p>
+                <div className="mt-2 w-full bg-green-200 dark:bg-green-900/40 rounded-full h-2">
+                  <div className="bg-green-500 dark:bg-green-400 h-2 rounded-full" style={{ width: '94%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/50 dark:to-emerald-900/30 border-emerald-200 dark:border-emerald-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                  Carbon Footprint
+                </CardTitle>
+                <div className="p-2 bg-emerald-500 dark:bg-emerald-600 rounded-lg">
+                  <Leaf className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-emerald-800 dark:text-emerald-200">2.4t CO₂</div>
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">-12% reduction</p>
+                <div className="mt-2 w-full bg-emerald-200 dark:bg-emerald-900/40 rounded-full h-2">
+                  <div className="bg-emerald-500 dark:bg-emerald-400 h-2 rounded-full" style={{ width: '60%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 border-purple-200 dark:border-purple-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">Cost Savings</CardTitle>
+                <div className="p-2 bg-purple-500 dark:bg-purple-600 rounded-lg">
+                  <DollarSign className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-purple-800 dark:text-purple-200">{formatCurrencyINR(12450)}</div>
+                <p className="text-xs text-purple-600 dark:text-purple-400 font-medium">+8% this quarter</p>
+                <div className="mt-2 w-full bg-purple-200 dark:bg-purple-900/40 rounded-full h-2">
+                  <div className="bg-purple-500 dark:bg-purple-400 h-2 rounded-full" style={{ width: '75%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Recent Shipments */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Package className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                Recent Shipments
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">
+                Track your latest shipment activities and performance
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="space-y-4">
+                {supplierShipments.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="font-medium">No shipments yet</p>
+                    <p className="text-sm">Create a shipment to get started</p>
+                  </div>
+                ) : (
+                  supplierShipments.slice(0, 3).map((shipment) => {
+                    const statusColor =
+                      shipment.status === 'delivered' ? 'green' :
+                        shipment.status === 'in-transit' ? 'blue' : 'yellow';
+                    const statusDisplay =
+                      shipment.status === 'in-transit' ? 'In Transit' :
+                        shipment.status === 'delivered' ? 'Delivered' :
+                          shipment.status === 'dispatched' ? 'Dispatched' : 'Pending';
+
+                    return (
+                      <div
+                        key={shipment.id}
+                        className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between p-4 border rounded-lg bg-white dark:bg-slate-800/50 dark:border-slate-700 shadow-sm hover:shadow-md transition-all duration-200"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`p-2 rounded-lg ${statusColor === 'blue' ? 'bg-blue-100 dark:bg-blue-900/50' :
+                            statusColor === 'green' ? 'bg-green-100 dark:bg-green-900/50' : 'bg-yellow-100 dark:bg-yellow-900/50'
+                            }`}>
+                            <Package className={`h-4 w-4 ${statusColor === 'blue' ? 'text-blue-600 dark:text-blue-400' :
+                              statusColor === 'green' ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'
+                              }`} />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-slate-800 dark:text-slate-200">{shipment.id}</div>
+                            <div className="text-sm text-slate-600 dark:text-slate-400">
+                              {shipment.customer} • {shipment.transporter}
+                              {shipment.vehicle && shipment.vehicle !== 'Not Assigned' && (
+                                <span className="ml-2 text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                                  🚛 {shipment.vehicle}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-left sm:text-right w-full sm:w-auto">
+                          <Badge
+                            variant={
+                              shipment.status === "delivered" ? "default" :
+                                shipment.status === "in-transit" ? "secondary" : "outline"
+                            }
+                            className={
+                              statusColor === 'green' ? "bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300" :
+                                statusColor === 'blue' ? "bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300" :
+                                  "bg-yellow-100 dark:bg-yellow-900/50 text-yellow-800 dark:text-yellow-300"
+                            }
+                          >
+                            {statusDisplay}
+                          </Badge>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{shipment.eta}</div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Enhanced Active Shipments */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-indigo-100 to-purple-100 dark:from-indigo-950/50 dark:to-purple-950/50 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Truck className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                Active Shipments
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">
+                Manage and track your shipment portfolio with detailed insights
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="space-y-6">
+                {shipments.map((shipment) => (
+                  <div
+                    key={shipment.id}
+                    className="p-6 border-2 border-blue-100 dark:border-blue-900/50 rounded-xl bg-gradient-to-br from-white to-blue-50/30 dark:from-slate-800/50 dark:to-blue-950/30 shadow-sm hover:shadow-xl hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-300 space-y-4 relative overflow-hidden"
+                  >
+                    {/* Flexify indicator */}
+                    <div className="absolute top-2 right-2 hidden sm:flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/50 rounded-full text-xs font-semibold text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+                      <Sparkles className="h-3 w-3" />
+                      <span>Flexify Ready</span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-4">
+                        <div className={`p-3 rounded-xl ${shipment.mode === 'truck' ? 'bg-blue-100 dark:bg-blue-900/50' :
+                          shipment.mode === 'ship' ? 'bg-cyan-100 dark:bg-cyan-900/50' :
+                            shipment.mode === 'air' ? 'bg-purple-100 dark:bg-purple-900/50' : 'bg-green-100 dark:bg-green-900/50'
+                          }`}>
+                          {shipment.mode === "truck" && <Truck className="h-5 w-5 text-blue-600 dark:text-blue-400" />}
+                          {shipment.mode === "ship" && <Ship className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />}
+                          {shipment.mode === "air" && <Plane className="h-5 w-5 text-purple-600 dark:text-purple-400" />}
+                          {shipment.mode === "ev" && <Truck className="h-5 w-5 text-green-600 dark:text-green-400" />}
+                        </div>
+                        <div>
+                          <div className="font-bold text-lg text-slate-800 dark:text-slate-200">{shipment.id}</div>
+                          <div className="text-sm text-slate-600 dark:text-slate-400 font-medium">{shipment.customer}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{shipment.route}</div>
+                        </div>
+                        <Badge
+                          variant={
+                            shipment.status === "delivered" ? "default" :
+                              shipment.status === "in-transit" ? "secondary" :
+                                shipment.status === "delayed" ? "destructive" : "outline"
+                          }
+                          className={`font-semibold ${shipment.status === "delivered" ? "bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300" :
+                            shipment.status === "in-transit" ? "bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300" :
+                              shipment.status === "delayed" ? "bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-300" :
+                                "bg-yellow-100 dark:bg-yellow-900/50 text-yellow-800 dark:text-yellow-300"
+                            }`}
+                        >
+                          {shipment.status.replace("-", " ").toUpperCase()}
+                        </Badge>
+                      </div>
+                      <div className="text-right sm:text-right">
+                        <div className="text-lg font-bold text-slate-800 dark:text-slate-200">{shipment.eta}</div>
+                        <div className="text-sm text-slate-600 dark:text-slate-400">ETA</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                        <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        <div>
+                          <div className="text-slate-500 dark:text-slate-400 text-xs">Cost</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">{formatCurrencyINR(shipment.cost)}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                        <Leaf className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                        <div>
+                          <div className="text-slate-500 dark:text-slate-400 text-xs">Carbon</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">{shipment.carbonFootprint}t CO₂</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                        <AlertTriangle
+                          className={`h-4 w-4 ${shipment.riskLevel === "high" ? "text-red-500 dark:text-red-400" :
+                            shipment.riskLevel === "medium" ? "text-yellow-500 dark:text-yellow-400" : "text-green-500 dark:text-green-400"
+                            }`}
+                        />
+                        <div>
+                          <div className="text-slate-500 dark:text-slate-400 text-xs">Risk</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200 capitalize">{shipment.riskLevel}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                        {shipment.mode === "truck" && <Truck className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
+                        {shipment.mode === "ship" && <Ship className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />}
+                        {shipment.mode === "air" && <Plane className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
+                        {shipment.mode === "ev" && <Truck className="h-4 w-4 text-green-600 dark:text-green-400" />}
+                        <div>
+                          <div className="text-slate-500 dark:text-slate-400 text-xs">Mode</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200 capitalize">
+                            {shipment.mode === "ev" ? "EV Truck" : shipment.mode}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {shipment.status === "in-transit" && (
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm font-medium">
+                          <span className="text-slate-600 dark:text-slate-400">Delivery Progress</span>
+                          <span className="text-slate-800 dark:text-slate-200">65%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3">
+                          <div className="bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 h-3 rounded-full" style={{ width: '65%' }}></div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button size="sm" variant="outline" className="flex-1 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-300 dark:hover:border-blue-700 dark:text-slate-200">
+                        <MapPin className="h-4 w-4 mr-1" />
+                        Track
+                      </Button>
+                      <Button size="sm" variant="outline" className="flex-1 hover:bg-green-50 dark:hover:bg-green-900/30 hover:border-green-300 dark:hover:border-green-700 dark:text-slate-200">
+                        <BarChart3 className="h-4 w-4 mr-1" />
+                        Details
+                      </Button>
+                      <AIInsightsButton
+                        message={`Tell me about shipment ${shipment.id}. What's its current status, estimated delivery time, and any potential risks?`}
+                        context={{ shipmentId: shipment.id, shipment }}
+                        onClick={onAIInsights}
+                        className="flex-1 min-w-[110px] sm:min-w-0 hover:bg-purple-50 dark:hover:bg-purple-900/30 hover:border-purple-300 dark:hover:border-purple-700"
+                      />
+                      <Button size="sm" variant="outline" className="flex-1 hover:bg-purple-50 dark:hover:bg-purple-900/30 hover:border-purple-300 dark:hover:border-purple-700 dark:text-slate-200">
+                        <Users className="h-4 w-4 mr-1" />
+                        Contact
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Enhanced Analytics Section */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-orange-50 to-red-50 dark:from-orange-950/50 dark:to-red-950/30 dark:border-orange-800/50">
+              <CardHeader className="bg-gradient-to-r from-orange-100 to-red-100 dark:from-orange-950/50 dark:to-red-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-orange-800 dark:text-orange-200 flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                  Route Performance
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Most disrupted routes this month</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  {[
+                    { route: "DEL → MUM", disruptions: 12, percentage: 85, color: "red" },
+                    { route: "BLR → HYD", disruptions: 8, percentage: 60, color: "orange" },
+                    { route: "MUM → PUN", disruptions: 5, percentage: 35, color: "yellow" },
+                    { route: "CHE → KOL", disruptions: 3, percentage: 20, color: "green" },
+                  ].map((route) => (
+                    <div key={route.route} className="space-y-2">
+                      <div className="flex justify-between text-sm font-medium">
+                        <span className="text-slate-700 dark:text-slate-300">{route.route}</span>
+                        <span className="text-slate-600 dark:text-slate-400">{route.disruptions} disruptions</span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3">
+                        <div
+                          className={`h-3 rounded-full ${route.color === 'red' ? 'bg-gradient-to-r from-red-400 to-red-600 dark:from-red-500 dark:to-red-700' :
+                            route.color === 'orange' ? 'bg-gradient-to-r from-orange-400 to-orange-600 dark:from-orange-500 dark:to-orange-700' :
+                              route.color === 'yellow' ? 'bg-gradient-to-r from-yellow-400 to-yellow-600 dark:from-yellow-500 dark:to-yellow-700' :
+                                'bg-gradient-to-r from-green-400 to-green-600 dark:from-green-500 dark:to-green-700'
+                            }`}
+                          style={{ width: `${route.percentage}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/50 dark:to-purple-950/30 dark:border-indigo-800/50">
+              <CardHeader className="bg-gradient-to-r from-indigo-100 to-purple-100 dark:from-indigo-950/50 dark:to-purple-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-purple-800 dark:text-purple-200 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                  Transporter Reliability
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Performance ratings and on-time delivery</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  {transporters.map((transporter) => (
+                    <div
+                      key={transporter.id}
+                      className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between p-4 bg-white dark:bg-slate-800/50 rounded-lg shadow-sm dark:border dark:border-slate-700"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg">
+                          <Users className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">{transporter.name}</div>
+                          <div className="text-sm text-slate-600 dark:text-slate-400">{transporter.modes.join(", ")}</div>
+                        </div>
+                        {transporter.evFleet && (
+                          <Badge
+                            variant="outline"
+                            className="text-green-600 dark:text-green-400 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/50"
+                          >
+                            <Leaf className="h-3 w-3 mr-1" />
+                            EV Fleet
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-left sm:text-right w-full sm:w-auto">
+                        <div className="font-bold text-lg text-slate-800 dark:text-slate-200">{transporter.rating}/5.0</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">Rating</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Advanced Analytics */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                Advanced Analytics & Insights
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400 text-lg">
+                Comprehensive performance metrics and business intelligence
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AnalyticsCharts userRole="supplier" />
+            </CardContent>
+          </Card>
+
+        </TabsContent>
+
+        <TabsContent value="operations" className="space-y-6">
+          {/* Operations Center */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 dark:border-blue-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-blue-100 to-blue-200 dark:from-blue-950/50 dark:to-blue-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  Disruption Management
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-blue-800 dark:text-blue-200 mb-2">
+                    {localDisruptions.filter(d => d.status !== 'resolved').length}
+                  </div>
+                  <div className="text-sm text-blue-600 dark:text-blue-400 mb-4">Active Disruptions</div>
+                  <Button
+                    className="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white"
+                    onClick={() => setActiveTab('disruptions')}
+                  >
+                    <AlertTriangle className="h-4 w-4 mr-2" />
+                    View Disruptions
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 dark:border-green-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-950/50 dark:to-green-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-green-800 dark:text-green-200 flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  Create Shipment
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-green-800 dark:text-green-200 mb-2">New</div>
+                  <div className="text-sm text-green-600 dark:text-green-400 mb-4">Shipment Creation</div>
+                  <Button
+                    onClick={onCreateShipment}
+                    className="w-full bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Now
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 dark:border-purple-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-purple-100 to-purple-200 dark:from-purple-950/50 dark:to-purple-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-purple-800 dark:text-purple-200 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  Carrier Assignment
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-purple-800 dark:text-purple-200 mb-2">{transporters.length}</div>
+                  <div className="text-sm text-purple-600 dark:text-purple-400 mb-4">Available Carriers</div>
+                  <Button className="w-full bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 text-white">
+                    <Users className="h-4 w-4 mr-2" />
+                    Assign Carriers
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Truck className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                Operations Dashboard
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">Manage disruptions, create shipments, and assign carriers</CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+                <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800/50">
+                  <h4 className="font-semibold text-blue-800 dark:text-blue-300 mb-2">Quick Actions</h4>
+                  <div className="space-y-2">
+                    <Button size="sm" variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:text-slate-200" onClick={() => setActiveTab('disruptions')}>
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                      View All Disruptions
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:text-slate-200" onClick={() => setActiveTab('analytics')}>
+                      <BarChart3 className="h-4 w-4 mr-2" />
+                      Performance Reports
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:text-slate-200">
+                      <Users className="h-4 w-4 mr-2" />
+                      Manage Carriers
+                    </Button>
+                  </div>
+                </div>
+                <div className="p-4 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800/50">
+                  <h4 className="font-semibold text-green-800 dark:text-green-300 mb-2">Recent Activity</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-green-700 dark:text-green-400">Shipment SH001</span>
+                      <span className="text-green-600 dark:text-green-400">In Transit</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-green-700 dark:text-green-400">Disruption D001</span>
+                      <span className="text-red-600 dark:text-red-400">Resolved</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-green-700 dark:text-green-400">New Carrier</span>
+                      <span className="text-blue-600 dark:text-blue-400">Added</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="disruptions" className="space-y-6">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold dark:text-white">Active Disruptions</h2>
+              <Badge variant="destructive" className="px-3 py-1 text-sm dark:bg-red-900/50 dark:text-red-300">
+                {localDisruptions.length} Active
+              </Badge>
+            </div>
+
+            {localDisruptions.length === 0 ? (
+              <div className="text-center py-8 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg dark:bg-slate-800/30">
+                <CheckCircle className="h-12 w-12 text-green-500 dark:text-green-400 mx-auto mb-2" />
+                <h3 className="text-lg font-medium dark:text-white">No active disruptions</h3>
+                <p className="text-muted-foreground dark:text-slate-400">Your supply chain is running smoothly.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {localDisruptions.map((disruption) => (
+                  <Card key={disruption.id} className="border-l-4 border-red-500 dark:border-red-700 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-950/30 dark:to-orange-950/30 shadow-md relative overflow-hidden dark:border-slate-700">
+                    {/* Flexify AI suggestion badge */}
+                    <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 dark:bg-blue-700 text-white rounded-full text-xs font-bold shadow-lg animate-pulse">
+                      <Sparkles className="h-3 w-3" />
+                      <span>AI Help Available</span>
+                    </div>
+
+                    <CardHeader className="pb-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <CardTitle className="text-lg text-red-900 dark:text-red-300">{disruption.type}</CardTitle>
+                          <CardDescription className="text-red-700 dark:text-red-400">
+                            Shipment: {disruption.shipmentId} • {disruption.location}
+                          </CardDescription>
+                        </div>
+                        <Badge
+                          variant={disruption.severity === 'high' ? 'destructive' : 'secondary'}
+                          className="ml-2 dark:bg-red-900/50 dark:text-red-300"
+                        >
+                          {disruption.severity.toUpperCase()}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="mb-4 text-red-800 dark:text-red-300">{disruption.description}</p>
+                      <div className="flex items-center text-sm text-red-700 dark:text-red-400 mb-4">
+                        <Clock className="h-4 w-4 mr-1" />
+                        <span>Detected: {new Date(disruption.timestamp).toLocaleString()}</span>
+                        <span className="mx-2">•</span>
+                        <AlertTriangle className="h-4 w-4 mr-1" />
+                        <span>Estimated delay: {disruption.delay}</span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleReroute(disruption)}
+                          className="dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Reroute Shipment
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleUpdateCustomer(disruption)}
+                          className="dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          Update Customer
+                        </Button>
+                        <AIInsightsButton
+                          message={`How should I handle the ${disruption.type} affecting shipment ${disruption.shipmentId}? What are the best resolution strategies?`}
+                          context={{ disruptionId: disruption.id, disruption }}
+                          onClick={onAIInsights}
+                          size="sm"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDisruptionAction(disruption.id, 'escalate')}
+                          className="dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          <AlertTriangle className="h-4 w-4 mr-2" />
+                          Escalate
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDisruptionAction(disruption.id, 'resolve')}
+                          className="ml-auto dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Mark as Resolved
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-6">
+          {/* Enhanced Analytics Charts */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 dark:border-blue-800/50">
+              <CardHeader className="bg-gradient-to-r from-blue-100 to-blue-200 dark:from-blue-950/50 dark:to-blue-900/50 rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-bold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                    <Package className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    Shipment Mode Split
+                  </CardTitle>
+                  <AIInsightsButton
+                    message="Analyze my shipment mode distribution. Which transport modes am I using most, and what are the cost and efficiency implications?"
+                    onClick={onAIInsights}
+                    variant="ghost"
+                    size="sm"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent className="p-6">
+                <ChartContainer id="supplier-pie" config={{}} className="aspect-square h-[300px]">
+                  <PieChart>
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Pie
+                      data={supplierModeSplit}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={60}
+                      labelLine={false}
+                      label={renderCustomizedLabel}
+                    >
+                      {supplierModeSplit.map((e, i) => (
+                        <Cell key={i} fill={e.color} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-orange-50 to-yellow-50 dark:from-orange-950/50 dark:to-yellow-950/30 dark:border-orange-800/50">
+              <CardHeader className="bg-gradient-to-r from-orange-100 to-yellow-100 dark:from-orange-950/50 dark:to-yellow-950/50 rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-bold text-orange-800 dark:text-orange-200 flex items-center gap-2">
+                    <DollarSign className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                    Cost Breakdown
+                  </CardTitle>
+                  <AIInsightsButton
+                    message="Explain my cost breakdown. Where are the main expenses, and how can I optimize costs across different transport modes?"
+                    onClick={onAIInsights}
+                    variant="ghost"
+                    size="sm"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent className="p-6">
+                <ChartContainer id="cost-breakdown-pie" config={{}} className="aspect-square h-[300px]">
+                  <PieChart>
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Pie
+                      data={costBreakdownData}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius={80}
+                      labelLine={false}
+                      label={renderCustomizedLabel}
+                    >
+                      {costBreakdownData.map((e, i) => (
+                        <Cell key={i} fill={e.color} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 dark:border-green-800/50">
+            <CardHeader className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-950/50 dark:to-green-900/50 rounded-t-lg">
+              <CardTitle className="text-lg font-bold text-green-800 dark:text-green-200 flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                Monthly Costs vs Carbon Footprint
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <ChartContainer id="supplier-bar" config={{}} className="h-[300px] w-full">
+                <BarChart data={supplierMonthlyCosts}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis dataKey="month" />
+                  <YAxis yAxisId="left" stroke="#16a34a" />
+                  <YAxis yAxisId="right" orientation="right" stroke="#6b7280" />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar yAxisId="left" dataKey="cost" fill="#22c55e" radius={[4, 4, 0, 0]} name="Cost (₹k)" />
+                  <Line yAxisId="right" type="monotone" dataKey="carbon" stroke="#4b5563" strokeWidth={2} name="Carbon (t CO₂)" />
+                </BarChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 dark:border-purple-800/50">
+            <CardHeader className="bg-gradient-to-r from-purple-100 to-purple-200 dark:from-purple-950/50 dark:to-purple-900/50 rounded-t-lg">
+              <CardTitle className="text-lg font-bold text-purple-800 dark:text-purple-200 flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                On-Time Delivery vs Disruptions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <ChartContainer id="supplier-line" config={{}} className="h-[300px] w-full">
+                <LineChart data={supplierOnTimeSeries}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis yAxisId="left" domain={[85, 100]} stroke="#8b5cf6" />
+                  <YAxis yAxisId="right" orientation="right" stroke="#ef4444" />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line yAxisId="left" type="monotone" dataKey="rate" stroke="#8b5cf6" strokeWidth={2} name="On-Time Rate (%)" />
+                  <Line yAxisId="right" type="monotone" dataKey="disruptions" stroke="#ef4444" strokeDasharray="5 5" name="Disruptions" />
+                </LineChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Users className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                Carrier Performance Overview
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-6">
+              <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-2">
+                <div className="space-y-3 sm:space-y-4">
+                  <h3 className="font-semibold dark:text-slate-200 text-sm sm:text-base">On-Time Percentage by Carrier</h3>
+                  <ChartContainer config={{}} className="h-[200px] sm:h-[250px] w-full">
+                    <BarChart data={carrierPerformanceData} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid horizontal={false} />
+                      <XAxis type="number" domain={[80, 100]} />
+                      <YAxis dataKey="name" type="category" />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="onTime" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+                <div className="space-y-3 sm:space-y-4">
+                  <h3 className="font-semibold dark:text-slate-200 text-sm sm:text-base">Average Cost per Shipment (₹k)</h3>
+                  <ChartContainer config={{}} className="h-[200px] sm:h-[250px] w-full">
+                    <BarChart data={carrierPerformanceData} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid horizontal={false} />
+                      <XAxis type="number" />
+                      <YAxis dataKey="name" type="category" />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="cost" fill="#16a34a" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-6">
+          {/* Enhanced Settings */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+              <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <Shield className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                  Account Settings
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Manage your supplier account preferences</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800/50">
+                    <h4 className="font-semibold text-blue-800 dark:text-blue-300 mb-2">Profile Information</h4>
+                    <Button variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:text-slate-200">
+                      <User className="h-4 w-4 mr-2" />
+                      Edit Profile
+                    </Button>
+                  </div>
+                  <div className="p-4 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800/50">
+                    <h4 className="font-semibold text-green-800 dark:text-green-300 mb-2">Notification Preferences</h4>
+                    <Button variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-green-50 dark:hover:bg-green-900/30 dark:text-slate-200">
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                      Configure Alerts
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+              <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                  Business Settings
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Configure your business operations</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="p-4 bg-purple-50 dark:bg-purple-950/30 rounded-lg border border-purple-200 dark:border-purple-800/50">
+                    <h4 className="font-semibold text-purple-800 dark:text-purple-300 mb-2">Default Carriers</h4>
+                    <Button variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-purple-50 dark:hover:bg-purple-900/30 dark:text-slate-200">
+                      <Users className="h-4 w-4 mr-2" />
+                      Manage Carriers
+                    </Button>
+                  </div>
+                  <div className="p-4 bg-orange-50 dark:bg-orange-950/30 rounded-lg border border-orange-200 dark:border-orange-800/50">
+                    <h4 className="font-semibold text-orange-800 dark:text-orange-300 mb-2">Shipping Preferences</h4>
+                    <Button variant="outline" className="w-full justify-start bg-white dark:bg-slate-800/50 hover:bg-orange-50 dark:hover:bg-orange-900/30 dark:text-slate-200">
+                      <Truck className="h-4 w-4 mr-2" />
+                      Set Defaults
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Telegram Integration Section */}
+          <div className="mt-6">
+            <TelegramLink
+              userId="supplier-demo"
+              userName="supplier"
+            />
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function TransporterDashboard({
+  onRequestAction,
+  onShipmentStatusUpdate,
+  shipments = [],
+  onAIInsights,
+  dbShipments = [],
+  dbSuppliers = [],
+  dbTransporters = [],
+  dbUpdateShipment,
+  currentTab = "overview",
+  onTabChange
+}: {
+  onRequestAction: (id: string, action: 'accept' | 'decline') => void;
+  onShipmentStatusUpdate: (id: string, status: string) => void;
+  shipments: ShipmentData[];
+  onAIInsights: (message: string, context?: any) => void;
+  dbShipments?: any[];
+  dbSuppliers?: any[];
+  dbTransporters?: any[];
+  dbUpdateShipment?: (id: string, updates: any) => Promise<any>;
+  currentTab?: string;
+  onTabChange?: (tab: string) => void;
+}) {
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [activeTab, setActiveTab] = useState(currentTab);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [fleetManagementTab, setFleetManagementTab] = useState("vehicles"); // Separate state for Fleet Management
+
+  // Sync with parent tab state
+  useEffect(() => {
+    setActiveTab(currentTab);
+  }, [currentTab]);
+
+  // Notify parent when tab changes
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (onTabChange) {
+      onTabChange(tab);
+    }
+  };
+
+  // Handle Fleet Management tab changes independently
+  const handleFleetTabChange = (tab: string) => {
+    console.log('🚢 Fleet Management tab changed to:', tab);
+    setFleetManagementTab(tab);
+  };
+
+  // Load active shipments (assigned transporter but no vehicle yet)
+  const [activeShipments, setActiveShipments] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Filter shipments with transporter assigned but no vehicle
+    const assignedShipments = dbShipments?.filter(ship => {
+      const hasTransporter = !!ship.transporter_id;
+      const hasNoVehicle = !ship.vehicle_id; // Assuming vehicle_id field exists
+      console.log('🚛 Shipment:', ship.shipment_id, {
+        transporter_id: ship.transporter_id,
+        hasTransporter,
+        hasNoVehicle
+      });
+      return hasTransporter && hasNoVehicle;
+    }) || [];
+
+    console.log('🚛 Active shipments (has transporter, no vehicle):', assignedShipments.length);
+
+    const mapped = assignedShipments.map(ship => ({
+      id: ship.shipment_id || ship.id,
+      supplier: dbSuppliers?.find(s => s.id === ship.supplier_id)?.name || 'Unknown Supplier',
+      route: `${ship.from_location} → ${ship.to_location}`,
+      status: ship.status,
+      progress: ship.progress || 0,
+      vehicle: 'Not Assigned',
+      eta: ship.eta ? new Date(ship.eta).toLocaleDateString() : 'TBD',
+      lastUpdate: new Date(ship.updated_at).toLocaleString(),
+      shipmentData: ship
+    }));
+
+    setActiveShipments(mapped);
+  }, [dbShipments, dbSuppliers]);
+
+  const [vehicles, setVehicles] = useState([
+    {
+      id: "TRK-001",
+      type: "truck",
+      model: "Freightliner Cascadia",
+      capacity: "80,000 lbs",
+      status: "in-transit",
+      location: "Nagpur, MH",
+      driver: "Amit Kumar",
+      isEV: false,
+      fuelEfficiency: "3.0 km/l",
+      lastMaintenance: "2025-01-15",
+    },
+    {
+      id: "TRK-002",
+      type: "ev",
+      model: "Tesla Semi",
+      capacity: "82,000 lbs",
+      status: "available",
+      location: "Mumbai, MH",
+      driver: "Pooja Sharma",
+      isEV: true,
+      fuelEfficiency: "1.0 kWh/km",
+      lastMaintenance: "2025-02-01",
+    },
+    {
+      id: "SHP-001",
+      type: "ship",
+      model: "Container Vessel",
+      capacity: "20,000 TEU",
+      status: "available",
+      location: "JNPT, Navi Mumbai",
+      driver: "Captain Iyer",
+      isEV: false,
+      fuelEfficiency: "0.10 l/TEU-km",
+      lastMaintenance: "2025-01-20",
+    },
+    {
+      id: "AIR-001",
+      type: "air",
+      model: "Boeing 747F",
+      capacity: "140 tons",
+      status: "maintenance",
+      location: "IGI Cargo, Delhi",
+      driver: "Pilot Singh",
+      isEV: false,
+      fuelEfficiency: "2.6 l/km",
+      lastMaintenance: "2025-02-10",
+    },
+  ]);
+
+  // Update vehicles with assigned shipments
+  useEffect(() => {
+    setVehicles(prevVehicles => {
+      return prevVehicles.map(vehicle => {
+        // Find shipments assigned to this vehicle
+        const assignedShipment = dbShipments?.find(ship => ship.vehicle_id === vehicle.id);
+
+        if (assignedShipment) {
+          return {
+            ...vehicle,
+            status: 'in-transit',
+            assignedShipment: {
+              id: assignedShipment.shipment_id,
+              route: `${assignedShipment.from_location} → ${assignedShipment.to_location}`,
+              progress: assignedShipment.progress
+            }
+          };
+        }
+        return vehicle;
+      });
+    });
+  }, [dbShipments]);
+
+  // Load pending requests from unassigned shipments
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+
+  useEffect(() => {
+    console.log('🔄 Checking for unassigned shipments...', {
+      dbShipmentsCount: dbShipments?.length || 0,
+      dbSuppliersCount: dbSuppliers?.length || 0,
+      dbTransportersCount: dbTransporters?.length || 0,
+      hasData: !!dbShipments && !!dbSuppliers
+    });
+
+    // Wait for data to load
+    if (!dbShipments || !dbSuppliers) {
+      console.log('⏳ Waiting for data to load...');
+      return;
+    }
+
+    // Filter shipments without transporter (unassigned)
+    const unassignedShipments = dbShipments.filter(ship => {
+      const isUnassigned = !ship.transporter_id;
+      console.log('📦 Checking shipment:', ship.shipment_id, {
+        transporter_id: ship.transporter_id,
+        isUnassigned,
+        status: ship.status,
+        from: ship.from_location,
+        to: ship.to_location
+      });
+      return isUnassigned;
+    });
+
+    console.log('🚚 Found unassigned shipments:', unassignedShipments.length);
+
+    const requests = unassignedShipments.map(ship => {
+      const supplier = dbSuppliers.find(s => s.id === ship.supplier_id);
+      console.log('🔗 Mapping request:', {
+        shipment_id: ship.shipment_id,
+        supplier_id: ship.supplier_id,
+        supplier_name: supplier?.name
+      });
+
+      return {
+        id: ship.shipment_id || ship.id,
+        supplier: supplier?.name || 'Unknown Supplier',
+        route: `${ship.from_location || 'Unknown'} → ${ship.to_location || 'Unknown'}`,
+        priority: ship.status === 'urgent' ? 'High' : ship.status === 'preparing' ? 'Medium' : 'Low',
+        weight: ship.weight || 'N/A',
+        estimatedRevenue: ship.cost || 0,
+        pickupDate: ship.created_at ? new Date(ship.created_at).toLocaleDateString() : 'TBD',
+        deliveryDate: ship.eta ? new Date(ship.eta).toLocaleDateString() : 'TBD',
+        shipmentData: ship // Store full shipment data
+      };
+    });
+
+    console.log('✅ Setting pending requests:', requests.length, 'requests');
+    console.log('📋 Requests details:', requests);
+    setPendingRequests(requests);
+  }, [dbShipments, dbSuppliers, dbTransporters]);
+
+  const handleRequestAction = async (
+    requestId: string,
+    action: "accept" | "decline"
+  ) => {
+    if (action === 'accept') {
+      try {
+        // Find the shipment and assign transporter
+        const request = pendingRequests.find(r => r.id === requestId);
+        if (request && request.shipmentData) {
+          const transporterId = dbTransporters && dbTransporters.length > 0
+            ? dbTransporters[0].id
+            : null;
+
+          if (transporterId && dbUpdateShipment) {
+            console.log('✅ Accepting shipment:', requestId, 'Assigning transporter:', transporterId);
+            // Update shipment with transporter
+            await dbUpdateShipment(request.shipmentData.id, {
+              transporter_id: transporterId,
+              status: 'dispatched'
+            });
+            console.log('✅ Shipment updated successfully!');
+          } else {
+            console.error('❌ Missing transporterId or dbUpdateShipment function');
+          }
+        } else {
+          console.error('❌ Request not found:', requestId);
+        }
+      } catch (error) {
+        console.error('❌ Error accepting shipment:', error);
+      }
+    }
+    onRequestAction(requestId, action);
+  };
+
+  const updateShipmentStatus = (
+    shipmentId: string,
+    newStatus: string,
+    newProgress: number
+  ) => {
+    onShipmentStatusUpdate(shipmentId, newStatus);
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "available":
+        return "text-primary";
+      case "in-transit":
+        return "text-blue-600";
+      case "maintenance":
+        return "text-destructive";
+      case "preparing":
+        return "text-yellow-600";
+      default:
+        return "text-muted-foreground";
+    }
+  };
+
+  const getVehicleIcon = (type: string) => {
+    switch (type) {
+      case "truck":
+        return Truck;
+      case "ev":
+        return Truck;
+      case "ship":
+        return Ship;
+      case "air":
+        return Plane;
+      default:
+        return Truck;
+    }
+  };
+
+  const trackingVehicles = [
+    {
+      id: "TRK-001",
+      type: "truck" as const,
+      position: { lat: 28.6139, lng: 77.209 },
+      shipmentId: "SH001",
+      status: "in-transit" as const,
+    },
+    {
+      id: "TRK-002",
+      type: "ev" as const,
+      position: { lat: 19.076, lng: 72.8777 },
+      status: "idle" as const,
+    },
+    {
+      id: "SHP-001",
+      type: "ship" as const,
+      position: { lat: 18.946, lng: 72.952 },
+      status: "loading" as const,
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Enhanced Header with Gradient Background */}
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-green-600 via-teal-600 to-cyan-700 dark:from-green-900 dark:via-teal-900 dark:to-cyan-900 p-4 sm:p-6 md:p-8 text-white">
+        <div className="absolute inset-0 bg-black/20 dark:bg-black/40"></div>
+        <div className="relative z-10">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2">Transporter Dashboard</h1>
+              <p className="text-green-100 dark:text-green-200 text-sm sm:text-base md:text-lg">Manage your fleet operations and delivery performance</p>
+            </div>
+            {/* AI quick actions removed per feedback */}
+            <div className="flex flex-wrap gap-2 sm:gap-3">
+              <Button
+                onClick={() => setShowAddVehicle(true)}
+                className="bg-white/20 hover:bg-white/30 dark:bg-white/10 dark:hover:bg-white/20 text-white border-white/30 backdrop-blur-sm transition-all duration-200 hover:scale-105 text-sm sm:text-base"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Add </span>Vehicle
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/15 text-white border-white/30 backdrop-blur-sm text-sm sm:text-base"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Analytics</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full"></div>
+        <div className="absolute -bottom-5 -left-5 w-32 h-32 bg-white/5 rounded-full"></div>
+      </div>
+
+      {/* Enhanced Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="flex w-full overflow-x-auto gap-1 mb-6 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 p-1 rounded-lg dark:border dark:border-slate-700 sm:grid sm:grid-cols-4">
+          <TabsTrigger
+            value="overview"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Truck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Overview</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="fleet"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Ship className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Fleet</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="shipments"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-purple-600 dark:data-[state=active]:text-purple-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Package className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Shipments</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="analytics"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-orange-600 dark:data-[state=active]:text-orange-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Analytics</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+
+          {/* Enhanced Stats Cards */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 border-green-200 dark:border-green-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
+                  Active Vehicles
+                </CardTitle>
+                <div className="p-2 bg-green-500 dark:bg-green-600 rounded-lg">
+                  <Truck className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-green-800 dark:text-green-200">{vehicles.length}</div>
+                <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+                  {vehicles.filter((v) => v.status === "available").length}{" "}
+                  available,{" "}
+                  {vehicles.filter((v) => v.status === "in-transit").length} in
+                  transit
+                </p>
+                <div className="mt-2 w-full bg-green-200 dark:bg-green-900/40 rounded-full h-2">
+                  <div className="bg-green-500 dark:bg-green-400 h-2 rounded-full" style={{ width: '75%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 border-blue-200 dark:border-blue-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                  Pending Requests
+                </CardTitle>
+                <div className="p-2 bg-blue-500 dark:bg-blue-600 rounded-lg">
+                  <Package className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-blue-800 dark:text-blue-200">{pendingRequests.length}</div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                  {pendingRequests.filter((r) => r.priority === "High").length}{" "}
+                  urgent,{" "}
+                  {pendingRequests.filter((r) => r.priority !== "High").length}{" "}
+                  standard
+                </p>
+                <div className="mt-2 w-full bg-blue-200 dark:bg-blue-900/40 rounded-full h-2">
+                  <div className="bg-blue-500 dark:bg-blue-400 h-2 rounded-full" style={{ width: '60%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/50 dark:to-emerald-900/30 border-emerald-200 dark:border-emerald-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-300">EV Fleet %</CardTitle>
+                <div className="p-2 bg-emerald-500 dark:bg-emerald-600 rounded-lg">
+                  <Leaf className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-emerald-800 dark:text-emerald-200">
+                  {Math.round(
+                    (vehicles.filter((v) => v.isEV).length / vehicles.length) * 100
+                  )}
+                  %
+                </div>
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  {vehicles.filter((v) => v.isEV).length} of {vehicles.length}{" "}
+                  vehicles
+                </p>
+                <div className="mt-2 w-full bg-emerald-200 dark:bg-emerald-900/40 rounded-full h-2">
+                  <div className="bg-emerald-500 dark:bg-emerald-400 h-2 rounded-full" style={{ width: '25%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 border-purple-200 dark:border-purple-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">Revenue</CardTitle>
+                <div className="p-2 bg-purple-500 dark:bg-purple-600 rounded-lg">
+                  <DollarSign className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-purple-800 dark:text-purple-200">{formatCurrencyINR(45230)}</div>
+                <p className="text-xs text-purple-600 dark:text-purple-400 font-medium">+12% from last month</p>
+                <div className="mt-2 w-full bg-purple-200 dark:bg-purple-900/40 rounded-full h-2">
+                  <div className="bg-purple-500 dark:bg-purple-400 h-2 rounded-full" style={{ width: '85%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Fleet Tracking */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-cyan-100 to-blue-100 dark:from-cyan-950/50 dark:to-blue-950/50 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <MapPin className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+                Fleet Tracking
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">Monitor your vehicles in real-time with live updates</CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <InteractiveMap
+                vehicles={trackingVehicles}
+                showVehicles={true}
+                trackingMode={true}
+                className="h-64 sm:h-80 md:h-96 rounded-lg"
+              />
+            </CardContent>
+          </Card>
+
+          {/* Enhanced Fleet Management */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-indigo-100 to-purple-100 dark:from-indigo-950/50 dark:to-purple-950/50 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Truck className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                Fleet Management
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">Monitor and manage your vehicle fleet with comprehensive controls</CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <Tabs
+                value={fleetManagementTab}
+                onValueChange={handleFleetTabChange}
+                className="w-full"
+              >
+                <TabsList className="flex w-full overflow-x-auto gap-1 bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 p-1 rounded-lg dark:border dark:border-slate-700 sm:grid sm:grid-cols-3">
+                  <TabsTrigger
+                    value="vehicles"
+                    className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-indigo-600 dark:data-[state=active]:text-indigo-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                  >
+                    <Truck className="h-4 w-4 mr-2" />
+                    Vehicles
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="requests"
+                    className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200 relative"
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    Requests
+                    {pendingRequests.length > 0 && (
+                      <Badge className="ml-2 bg-red-500 text-white text-xs">
+                        {pendingRequests.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="shipments"
+                    className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-purple-600 dark:data-[state=active]:text-purple-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                  >
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    Active Shipments
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="vehicles" className="space-y-4">
+                  <div className="space-y-4">
+                    {vehicles.map((vehicle) => {
+                      const VehicleIcon = getVehicleIcon(vehicle.type);
+                      return (
+                        <div key={vehicle.id} className="p-4 border rounded-lg">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`p-2 rounded-lg ${vehicle.isEV ? "bg-primary" : "bg-muted"
+                                  }`}
+                              >
+                                <VehicleIcon
+                                  className={`h-4 w-4 ${vehicle.isEV
+                                    ? "text-white"
+                                    : "text-muted-foreground"
+                                    }`}
+                                />
+                              </div>
+                              <div>
+                                <div className="font-medium">
+                                  {vehicle.id} - {vehicle.model}
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  Driver: {vehicle.driver} • Capacity:{" "}
+                                  {vehicle.capacity}
+                                </div>
+                              </div>
+                              {vehicle.isEV && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-primary border-primary"
+                                >
+                                  <Leaf className="h-3 w-3 mr-1" />
+                                  EV
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-left sm:text-right w-full sm:w-auto">
+                              <div
+                                className={`text-sm font-medium capitalize ${getStatusColor(
+                                  vehicle.status
+                                )}`}
+                              >
+                                {vehicle.status.replace("-", " ")}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {vehicle.location}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">
+                                Fuel Efficiency:
+                              </span>
+                              <div className="font-medium">
+                                {vehicle.fuelEfficiency}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">
+                                Last Maintenance:
+                              </span>
+                              <div className="font-medium">
+                                {vehicle.lastMaintenance}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 items-center">
+                              <Button size="sm" variant="outline">
+                                Edit
+                              </Button>
+                              {vehicle.status === "available" && (
+                                <Button size="sm">Assign</Button>
+                              )}
+                              <AIInsightsButton
+                                message={`Tell me about vehicle ${vehicle.id}`}
+                                size="sm"
+                                variant="outline"
+                                onClick={(msg) =>
+                                  handleAIInsights(msg, { vehicle })
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          {/* Show assigned shipment if any */}
+                          {/* Commented out - assignedShipment property not in vehicle type
+                          {vehicle.assignedShipment && (
+                            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Package className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                                <span className="font-medium text-sm text-blue-900 dark:text-blue-100">
+                                  Assigned Shipment: {vehicle.assignedShipment.id}
+                                </span>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                Route: {vehicle.assignedShipment.route}
+                              </div>
+                              {vehicle.assignedShipment.progress && (
+                                <div className="mt-2">
+                                  <div className="flex justify-between text-xs mb-1">
+                                    <span>Progress</span>
+                                    <span>{vehicle.assignedShipment.progress}%</span>
+                                  </div>
+                                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                                    <div
+                                      className="bg-blue-500 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+                                      style={{ width: `${vehicle.assignedShipment.progress}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          */}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="requests" className="space-y-4">
+                  <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+                      📊 Pending Requests: {pendingRequests.length}
+                    </div>
+                    <div className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                      {!dbShipments || !dbSuppliers ?
+                        '⏳ Loading data from database...' :
+                        `✅ Loaded ${dbShipments?.length || 0} shipments, ${dbSuppliers?.length || 0} suppliers`
+                      }
+                    </div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      Current Fleet Tab: {fleetManagementTab}
+                    </div>
+                  </div>
+
+                  {!dbShipments || !dbSuppliers ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                      <p className="text-muted-foreground">Loading requests...</p>
+                    </div>
+                  ) : pendingRequests.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p className="font-medium">No pending requests</p>
+                      <p className="text-sm">New shipment requests will appear here</p>
+                      <p className="text-xs mt-2 text-blue-600 dark:text-blue-400">
+                        💡 Tip: Requests are shipments without an assigned transporter
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {pendingRequests.map((request) => (
+                        <div key={request.id} className="p-4 border rounded-lg">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
+                            <div>
+                              <div className="font-medium">{request.id}</div>
+                              <div className="text-sm text-muted-foreground">
+                                {request.supplier}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {request.route}
+                              </div>
+                            </div>
+                            <Badge
+                              variant={
+                                request.priority === "High"
+                                  ? "destructive"
+                                  : request.priority === "Medium"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {request.priority} Priority
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                            <div>
+                              <span className="text-muted-foreground">Weight:</span>
+                              <div className="font-medium">{request.weight}</div>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Revenue:</span>
+                              <div className="font-medium text-primary">
+                                {formatCurrencyINR(request.estimatedRevenue)}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Pickup:</span>
+                              <div className="font-medium">{request.pickupDate}</div>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Delivery:</span>
+                              <div className="font-medium">
+                                {request.deliveryDate}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                handleRequestAction(request.id, "decline")
+                              }
+                            >
+                              <XCircle className="h-4 w-4 mr-1" />
+                              Decline
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() =>
+                                handleRequestAction(request.id, "accept")
+                              }
+                            >
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Accept
+                            </Button>
+                            <AIInsightsButton
+                              size="sm"
+                              variant="outline"
+                              label="AI Suggestion"
+                              message={`Draft a quote and ETA for request ${request.id}. Recommend the best vehicle and route, and give a quick INR cost breakdown.`}
+                              context={{ request, vehicles, activeShipments }}
+                              onClick={onAIInsights}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="shipments" className="space-y-4">
+                  <div className="space-y-4">
+                    {activeShipments.map((shipment) => (
+                      <div key={shipment.id} className="p-4 border rounded-lg">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <div className="font-medium">{shipment.id}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {shipment.supplier}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {shipment.route}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <Badge
+                              variant={
+                                shipment.status === "delivered"
+                                  ? "default"
+                                  : shipment.status === "in-transit"
+                                    ? "secondary"
+                                    : shipment.status === "preparing"
+                                      ? "outline"
+                                      : "outline"
+                              }
+                            >
+                              {shipment.status.replace("-", " ")}
+                            </Badge>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Vehicle: {shipment.vehicle}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="flex justify-between text-sm">
+                            <span>Progress</span>
+                            <span>
+                              {shipment.progress}% • ETA: {shipment.eta}
+                            </span>
+                          </div>
+                          <Progress value={shipment.progress} className="h-2" />
+
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-muted-foreground">
+                              Last update: {shipment.lastUpdate}
+                            </div>
+                            <div className="flex gap-2">
+                              {shipment.vehicle === 'Not Assigned' && (
+                                <Select
+                                  onValueChange={async (vehicleId) => {
+                                    try {
+                                      console.log('🚗 Assigning vehicle:', vehicleId, 'to shipment:', shipment.id);
+                                      if (dbUpdateShipment && shipment.shipmentData) {
+                                        await dbUpdateShipment(shipment.shipmentData.id, {
+                                          vehicle_id: vehicleId,
+                                          status: 'in_transit'
+                                        });
+                                        console.log('✅ Vehicle assigned successfully!');
+                                      }
+                                    } catch (error) {
+                                      console.error('❌ Error assigning vehicle:', error);
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger className="w-48">
+                                    <SelectValue placeholder="Assign Vehicle" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {vehicles.filter(v => v.status === 'available').map(vehicle => (
+                                      <SelectItem key={vehicle.id} value={vehicle.id}>
+                                        {vehicle.id} - {vehicle.model}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                              <Select
+                                onValueChange={(value) => {
+                                  const statusMap: {
+                                    [key: string]: {
+                                      status: string;
+                                      progress: number;
+                                    };
+                                  } = {
+                                    preparing: {
+                                      status: "preparing",
+                                      progress: 10,
+                                    },
+                                    dispatched: {
+                                      status: "dispatched",
+                                      progress: 25,
+                                    },
+                                    "in-transit": {
+                                      status: "in-transit",
+                                      progress: 50,
+                                    },
+                                    halfway: { status: "in-transit", progress: 75 },
+                                    delivered: {
+                                      status: "delivered",
+                                      progress: 100,
+                                    },
+                                  };
+                                  const update = statusMap[value];
+                                  if (update) {
+                                    updateShipmentStatus(
+                                      shipment.id,
+                                      update.status,
+                                      update.progress
+                                    );
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="w-40">
+                                  <SelectValue placeholder="Update status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="preparing">
+                                    Preparing
+                                  </SelectItem>
+                                  <SelectItem value="dispatched">
+                                    Dispatched
+                                  </SelectItem>
+                                  <SelectItem value="in-transit">
+                                    In Transit
+                                  </SelectItem>
+                                  <SelectItem value="halfway">
+                                    Reached Halfway
+                                  </SelectItem>
+                                  <SelectItem value="delivered">
+                                    Delivered
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          {/* Analytics Section */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Performance Analytics</CardTitle>
+                <CardDescription>
+                  Track your delivery performance and efficiency
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      Deliveries Completed
+                    </span>
+                    <span className="text-2xl font-bold">156</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      Average Delay per Route
+                    </span>
+                    <span className="text-lg font-semibold text-yellow-600">
+                      2.3 hours
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      On-Time Delivery Rate
+                    </span>
+                    <span className="text-lg font-semibold text-primary">
+                      92.4%
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      Customer Satisfaction
+                    </span>
+                    <span className="text-lg font-semibold text-primary">
+                      4.7/5.0
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Sustainability Score</CardTitle>
+                <CardDescription>
+                  Your environmental impact and EV adoption
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-primary mb-2">B+</div>
+                    <div className="text-sm text-muted-foreground">
+                      Overall Sustainability Grade
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>EV Fleet Adoption</span>
+                        <span>25%</span>
+                      </div>
+                      <Progress value={25} className="h-2" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Carbon Reduction</span>
+                        <span>18%</span>
+                      </div>
+                      <Progress value={18} className="h-2" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Route Optimization</span>
+                        <span>85%</span>
+                      </div>
+                      <Progress value={85} className="h-2" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 p-3 bg-primary/10 rounded-lg">
+                    <Leaf className="h-4 w-4 text-primary" />
+                    <div className="text-sm">
+                      <div className="font-medium text-primary">
+                        Green Badge Earned!
+                      </div>
+                      <div className="text-muted-foreground">
+                        25% EV fleet milestone reached
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Analytics Section */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                Fleet Analytics & Performance
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400 text-lg">
+                Detailed insights into fleet operations and sustainability
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AnalyticsCharts userRole="transporter" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="fleet" className="space-y-6">
+          {/* Fleet Management Tab */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 dark:border-blue-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-blue-100 to-blue-200 dark:from-blue-950/50 dark:to-blue-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                  <Truck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  Vehicle Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-blue-700 dark:text-blue-400 font-medium">Available</span>
+                    <Badge className="bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300">{vehicles.filter(v => v.status === "available").length}</Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-blue-700 dark:text-blue-400 font-medium">In Transit</span>
+                    <Badge className="bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300">{vehicles.filter(v => v.status === "in-transit").length}</Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-blue-700 dark:text-blue-400 font-medium">Maintenance</span>
+                    <Badge className="bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-300">{vehicles.filter(v => v.status === "maintenance").length}</Badge>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <AIInsightsButton
+                    size="sm"
+                    variant="outline"
+                    label="Optimize routes"
+                    message="Using current vehicles, shipments, and pending requests, propose an optimized route plan for today with driver assignments."
+                    context={{ vehicles, activeShipments, pendingRequests }}
+                    onClick={onAIInsights}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 dark:border-green-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-950/50 dark:to-green-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-green-800 dark:text-green-200 flex items-center gap-2">
+                  <Leaf className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  EV Fleet
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-green-800 mb-2">
+                    {Math.round((vehicles.filter(v => v.isEV).length / vehicles.length) * 100)}%
+                  </div>
+                  <div className="text-sm text-green-600 mb-4">EV Adoption</div>
+                  <div className="w-full bg-green-200 rounded-full h-3">
+                    <div
+                      className="bg-green-500 h-3 rounded-full"
+                      style={{ width: `${(vehicles.filter(v => v.isEV).length / vehicles.length) * 100}%` }}
+                    />
+                  </div>
+                  <div className="mt-3">
+                    <AIInsightsButton
+                      size="sm"
+                      variant="outline"
+                      label="Plan EV assignments"
+                      message="Suggest optimal EV assignments for today to maximize sustainability and minimize cost, considering current shipments and vehicle range."
+                      context={{ vehicles, activeShipments, shipments }}
+                      onClick={onAIInsights}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 dark:border-purple-800/50 hover:shadow-xl transition-all duration-300">
+              <CardHeader className="bg-gradient-to-r from-purple-100 to-purple-200 dark:from-purple-950/50 dark:to-purple-900/50 rounded-t-lg">
+                <CardTitle className="text-lg font-bold text-purple-800 dark:text-purple-200 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  Drivers
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-purple-800 dark:text-purple-200 mb-2">{vehicles.length}</div>
+                  <div className="text-sm text-purple-600 dark:text-purple-400 mb-4">Active Drivers</div>
+                  <Button size="sm" className="w-full bg-purple-600 hover:bg-purple-700 dark:bg-purple-800/50 dark:hover:bg-purple-900/50 text-white">
+                    <Users className="h-4 w-4 mr-2" />
+                    Manage Drivers
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="shipments" className="space-y-6">
+          {/* Shipments Management Tab */}
+          <div className="grid gap-6">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-orange-50 to-red-50 dark:from-orange-950/50 dark:to-red-950/30 dark:border-orange-800/50">
+              <CardHeader className="bg-gradient-to-r from-orange-100 to-red-100 dark:from-orange-950/50 dark:to-red-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-orange-800 dark:text-orange-200 flex items-center gap-2">
+                  <Package className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                  Active Shipments
+                </CardTitle>
+                <CardDescription className="text-orange-600 dark:text-slate-400">Manage your current delivery assignments</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  {activeShipments.map((shipment) => (
+                    <div key={shipment.id} className="p-4 bg-white dark:bg-slate-800/50 rounded-lg border border-orange-200 dark:border-orange-800/50 shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-orange-100 dark:bg-orange-900/50 rounded-lg">
+                            <Package className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-orange-800 dark:text-orange-300">{shipment.id}</div>
+                            <div className="text-sm text-orange-600 dark:text-orange-400">{shipment.supplier}</div>
+                            <div className="text-xs text-orange-500 dark:text-orange-400">{shipment.route}</div>
+                          </div>
+                        </div>
+                        <Badge
+                          variant={
+                            shipment.status === "delivered" ? "default" :
+                              shipment.status === "in-transit" ? "secondary" : "outline"
+                          }
+                          className={
+                            shipment.status === "delivered" ? "bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300" :
+                              shipment.status === "in-transit" ? "bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300" :
+                                "bg-yellow-100 dark:bg-yellow-900/50 text-yellow-800 dark:text-yellow-300"
+                          }
+                        >
+                          {shipment.status.replace("-", " ").toUpperCase()}
+                        </Badge>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-orange-600 dark:text-orange-400">Progress</span>
+                          <span className="text-orange-800 font-medium">{shipment.progress}% • ETA: {shipment.eta}</span>
+                        </div>
+                        <div className="w-full bg-orange-200 rounded-full h-2">
+                          <div
+                            className="bg-orange-500 h-2 rounded-full"
+                            style={{ width: `${shipment.progress}%` }}
+                          />
+                        </div>
+                        <div className="pt-2">
+                          <AIInsightsButton
+                            size="sm"
+                            variant="outline"
+                            label="Explain delays & reroute"
+                            message={`Analyze shipment ${shipment.id} for possible delays. Recommend rerouting options and customer messaging if needed.`}
+                            context={{ shipment, vehicles }}
+                            onClick={onAIInsights}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-6">
+          {/* Analytics Tab */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-cyan-50 to-blue-50 dark:from-cyan-950/50 dark:to-blue-950/30 dark:border-cyan-800/50">
+              <CardHeader className="bg-gradient-to-r from-cyan-100 to-blue-100 dark:from-cyan-950/50 dark:to-blue-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-cyan-800 dark:text-cyan-200 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+                  Performance Metrics
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-cyan-700 dark:text-slate-300 font-medium">Deliveries Completed</span>
+                    <span className="text-cyan-800 dark:text-cyan-200 font-bold text-xl">156</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-cyan-700 dark:text-slate-300 font-medium">On-Time Rate</span>
+                    <span className="text-cyan-800 dark:text-cyan-200 font-bold text-xl">92.4%</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-cyan-700 dark:text-slate-300 font-medium">Customer Rating</span>
+                    <span className="text-cyan-800 dark:text-cyan-200 font-bold text-xl">4.7/5.0</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-950/50 dark:to-green-950/30 dark:border-emerald-800/50">
+              <CardHeader className="bg-gradient-to-r from-emerald-100 to-green-100 dark:from-emerald-950/50 dark:to-green-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+                  <Leaf className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  Sustainability Score
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center mb-4">
+                  <div className="text-4xl font-bold text-emerald-800 dark:text-emerald-200 mb-2">B+</div>
+                  <div className="text-sm text-emerald-600 dark:text-emerald-400">Overall Sustainability Grade</div>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-emerald-700">EV Fleet Adoption</span>
+                      <span className="text-emerald-800 font-medium">25%</span>
+                    </div>
+                    <div className="w-full bg-emerald-200 rounded-full h-2">
+                      <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '25%' }}></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-emerald-700">Carbon Reduction</span>
+                      <span className="text-emerald-800 font-medium">18%</span>
+                    </div>
+                    <div className="w-full bg-emerald-200 rounded-full h-2">
+                      <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '18%' }}></div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                Detailed Analytics
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400 text-lg">
+                Comprehensive performance insights and business intelligence
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AnalyticsCharts userRole="transporter" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Add Vehicle Dialog */}
+      <Dialog open={showAddVehicle} onOpenChange={setShowAddVehicle}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Add New Vehicle</DialogTitle>
+            <DialogDescription>
+              Register a new vehicle to your fleet with detailed specifications
+            </DialogDescription>
+          </DialogHeader>
+          <AddVehicleForm onClose={() => setShowAddVehicle(false)} />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function AddVehicleForm({ onClose }: { onClose: () => void }) {
+  const [formData, setFormData] = useState({
+    type: "",
+    model: "",
+    capacity: "",
+    driver: "",
+    isEV: false,
+    location: "",
+  });
+
+  const handleSubmit = () => {
+    // In a real app, this would add the vehicle to the fleet
+    console.log("Adding vehicle:", formData);
+    onClose();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="type">Vehicle Type</Label>
+        <Select
+          value={formData.type}
+          onValueChange={(value) =>
+            setFormData((prev) => ({ ...prev, type: value }))
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select vehicle type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="truck">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4" />
+                Truck
+              </div>
+            </SelectItem>
+            <SelectItem value="ev">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4 text-primary" />
+                EV Truck
+              </div>
+            </SelectItem>
+            <SelectItem value="ship">
+              <div className="flex items-center gap-2">
+                <Ship className="h-4 w-4" />
+                Ship
+              </div>
+            </SelectItem>
+            <SelectItem value="air">
+              <div className="flex items-center gap-2">
+                <Plane className="h-4 w-4" />
+                Aircraft
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="model">Model</Label>
+        <Input
+          id="model"
+          placeholder="e.g., Freightliner Cascadia"
+          value={formData.model}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, model: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="capacity">Capacity</Label>
+        <Input
+          id="capacity"
+          placeholder="e.g., 80,000 lbs"
+          value={formData.capacity}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, capacity: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="driver">Assigned Driver</Label>
+        <Input
+          id="driver"
+          placeholder="Driver name"
+          value={formData.driver}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, driver: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="location">Current Location</Label>
+        <Input
+          id="location"
+          placeholder="e.g., Mumbai, MH"
+          value={formData.location}
+          onChange={(e) =>
+            setFormData((prev) => ({ ...prev, location: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="flex gap-3 pt-4">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          className="flex-1 bg-transparent"
+        >
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} className="flex-1">
+          Add Vehicle
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CustomerDashboard({
+  onRatingSubmit,
+  onNewOrder,
+  shipments = [],
+  suppliers = [],
+  onAIInsights,
+  currentTab = "overview",
+  onTabChange
+}: {
+  onRatingSubmit: (id: string, rating: number, feedback: string) => void;
+  onNewOrder: () => void;
+  shipments: ShipmentData[];
+  suppliers: Array<{
+    id: string;
+    name: string;
+    rating: number;
+    specialties: string[];
+    location: string;
+    deliveryTime: string;
+    minOrder: number;
+    ecoFriendly: boolean;
+    certifications: string[];
+    totalOrders: number;
+    onTimeRate: number;
+  }>;
+  onAIInsights: (message: string, context?: any) => void;
+  currentTab?: string;
+  onTabChange?: (tab: string) => void;
+}) {
+  const [showTrackShipment, setShowTrackShipment] = useState(false);
+  const [selectedShipment, setSelectedShipment] = useState<any>(null);
+  const [deliveryPreference, setDeliveryPreference] = useState("eco");
+  const [showRatingDialog, setShowRatingDialog] = useState(false);
+  const [shipmentToRate, setShipmentToRate] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState(currentTab);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // Sync with parent tab state
+  useEffect(() => {
+    setActiveTab(currentTab);
+  }, [currentTab]);
+
+  // Notify parent when tab changes
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (onTabChange) {
+      onTabChange(tab);
+    }
+  };
+
+  // Sync database shipments with vehicle assignments to incomingShipments
+  useEffect(() => {
+    // Filter shipments for current customer that have vehicles assigned
+    const customerShipmentsWithVehicles = shipments.filter(ship => {
+      const hasVehicle = ship.vehicle && ship.vehicle !== 'Not Assigned';
+      console.log('📦 Customer shipment:', ship.id, {
+        hasVehicle,
+        vehicle: ship.vehicle,
+        status: ship.status
+      });
+      return hasVehicle;
+    });
+
+    if (customerShipmentsWithVehicles.length > 0) {
+      const mappedShipments = customerShipmentsWithVehicles.map(ship => ({
+        id: ship.id,
+        supplier: ship.supplier || 'Unknown Supplier',
+        transporter: ship.transporter || 'Unknown Transporter',
+        status: ship.status,
+        progress: ship.progress || 0,
+        eta: ship.eta || 'Calculating...',
+        route: ship.route || 'Route not available',
+        estimatedDelivery: ship.estimatedDelivery || new Date().toISOString(),
+        trackingUpdates: [],
+        deliveryType: ship.type || 'standard',
+        carbonFootprint: 0.5,
+        cost: 2000,
+      }));
+
+      console.log('✅ Setting customer incoming shipments:', mappedShipments.length);
+      setIncomingShipments(mappedShipments);
+    }
+  }, [shipments]);
+
+  const [incomingShipments, setIncomingShipments] = useState([
+    {
+      id: "SH001",
+      supplier: "TechCorp India Pvt Ltd",
+      transporter: "FastTrack Logistics India",
+      status: "in-transit",
+      progress: 65,
+      eta: "18 hours",
+      route: "Delhi → Your Location",
+      estimatedDelivery: "2025-02-16 14:30",
+      trackingUpdates: [
+        {
+          time: "2025-02-14 09:00",
+          status: "Dispatched from Delhi",
+          location: "New Delhi, DL",
+        },
+        {
+          time: "2025-02-14 15:30",
+          status: "In transit via NH48",
+          location: "Gurugram, HR",
+        },
+        {
+          time: "2025-02-15 08:00",
+          status: "Reached checkpoint",
+          location: "Jaipur, RJ",
+        },
+        {
+          time: "2025-02-15 14:00",
+          status: "Currently en route",
+          location: "Udaipur, RJ",
+        },
+      ],
+      deliveryType: "fast",
+      carbonFootprint: 1.2,
+      cost: 2450,
+    },
+    {
+      id: "SH004",
+      supplier: "Global Retail India",
+      transporter: "Green Transport India",
+      status: "dispatched",
+      progress: 25,
+      eta: "2 days",
+      route: "Mumbai → Your Location",
+      estimatedDelivery: "2025-02-18 10:00",
+      trackingUpdates: [
+        {
+          time: "2025-02-15 07:00",
+          status: "Dispatched from Mumbai",
+          location: "Mumbai, MH",
+        },
+        {
+          time: "2025-02-15 12:00",
+          status: "Loading complete",
+          location: "Mumbai, MH",
+        },
+      ],
+      deliveryType: "eco",
+      carbonFootprint: 0.3,
+      cost: 1850,
+    },
+    {
+      id: "SH007",
+      supplier: "Manufacturing Co. India",
+      transporter: "Ocean Express India",
+      status: "preparing",
+      progress: 10,
+      eta: "5 days",
+      route: "Bengaluru → Your Location",
+      estimatedDelivery: "2025-02-20 16:00",
+      trackingUpdates: [
+        {
+          time: "2025-02-15 09:00",
+          status: "Order confirmed",
+          location: "Bengaluru, KA",
+        },
+        {
+          time: "2025-02-15 11:00",
+          status: "Preparing for dispatch",
+          location: "Bengaluru, KA",
+        },
+      ],
+      deliveryType: "eco",
+      carbonFootprint: 0.8,
+      cost: 1650,
+    },
+  ]);
+
+  const [completedShipments, setCompletedShipments] = useState([
+    {
+      id: "SH002",
+      supplier: "TechCorp India Pvt Ltd",
+      transporter: "FastTrack Logistics India",
+      deliveredDate: "2025-02-10",
+      rating: null,
+      deliveryType: "fast",
+      onTime: true,
+    },
+    {
+      id: "SH003",
+      supplier: "Global Retail India",
+      transporter: "Green Transport India",
+      deliveredDate: "2025-02-08",
+      rating: 5,
+      deliveryType: "eco",
+      onTime: true,
+    },
+  ]);
+
+
+  const handleRateSupplier = (
+    shipmentId: string,
+    rating: number,
+    feedback: string
+  ) => {
+    onRatingSubmit(shipmentId, rating, feedback);
+    setShowRatingDialog(false);
+    setShipmentToRate(null);
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "delivered":
+        return "text-primary";
+      case "in-transit":
+        return "text-blue-600";
+      case "dispatched":
+        return "text-yellow-600";
+      case "preparing":
+        return "text-muted-foreground";
+      default:
+        return "text-muted-foreground";
+    }
+  };
+
+  const ecoDeliveryPercentage = Math.round(
+    (incomingShipments.filter((s) => s.deliveryType === "eco").length /
+      incomingShipments.length) *
+    100
+  );
+
+  const getShipmentRoutes = (shipment: any) => [
+    {
+      id: `route-${shipment.id}`,
+      name: shipment.route,
+      locations: [
+        {
+          id: "origin",
+          name: "Origin",
+          lat: 40.7128,
+          lng: -74.006,
+          type: "origin" as const,
+        },
+        {
+          id: "current",
+          name: "Current Location",
+          lat: 39.0458,
+          lng: -76.6413,
+          type: "waypoint" as const,
+        },
+        {
+          id: "dest",
+          name: "Destination",
+          lat: 34.0522,
+          lng: -118.2437,
+          type: "destination" as const,
+        },
+      ],
+      distance: "2,789 miles",
+      duration: shipment.eta,
+      cost: `${formatCurrencyINR(shipment.cost)}`,
+      carbonFootprint: `${shipment.carbonFootprint}t CO₂`,
+      riskScore: 1,
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Enhanced Header with Gradient Background */}
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-rose-700 p-4 sm:p-6 md:p-8 text-white">
+        <div className="absolute inset-0 bg-black/20"></div>
+        <div className="relative z-10">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 dark:text-white">Customer Dashboard</h1>
+              <p className="text-purple-100 dark:text-slate-300 text-sm sm:text-base md:text-lg">Track your deliveries and manage your shipping preferences</p>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:gap-3">
+              <Button
+                onClick={onNewOrder}
+                className="bg-white/20 hover:bg-white/30 dark:bg-white/10 dark:hover:bg-white/20 text-white border-white/30 backdrop-blur-sm transition-all duration-200 hover:scale-105 text-sm sm:text-base"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">New </span>Order
+              </Button>
+              <Button
+                onClick={() => setShowTrackShipment(true)}
+                className="bg-white/20 hover:bg-white/30 dark:bg-white/10 dark:hover:bg-white/20 text-white border-white/30 backdrop-blur-sm transition-all duration-200 hover:scale-105 text-sm sm:text-base"
+              >
+                <MapPin className="h-4 w-4 mr-2" />
+                Track<span className="hidden sm:inline"> Shipment</span>
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowAnalytics(!showAnalytics)}
+                className="bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/15 text-white border-white/30 backdrop-blur-sm text-sm sm:text-base"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Analytics</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full"></div>
+        <div className="absolute -bottom-5 -left-5 w-32 h-32 bg-white/5 rounded-full"></div>
+      </div>
+
+      {/* Enhanced Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="flex w-full overflow-x-auto gap-1 mb-6 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 p-1 rounded-lg border dark:border-slate-700 sm:grid sm:grid-cols-4">
+          <TabsTrigger
+            value="overview"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-purple-600 dark:data-[state=active]:text-purple-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Package className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Overview</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="tracking"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Tracking</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="preferences"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400 dark:text-slate-300 font-semibold transition-all duration-200 text-xs sm:text-sm"
+          >
+            <Leaf className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            Preferences
+          </TabsTrigger>
+          <TabsTrigger
+            value="analytics"
+            className="flex-1 min-w-[120px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-orange-600 dark:data-[state=active]:text-orange-400 dark:text-slate-300 font-semibold transition-all duration-200"
+          >
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Analytics
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+
+          {/* Enhanced Stats Cards */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 border-purple-200 dark:border-purple-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                  Incoming Shipments
+                </CardTitle>
+                <div className="p-2 bg-purple-500 dark:bg-purple-600 rounded-lg">
+                  <Package className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-purple-800 dark:text-purple-200">{incomingShipments.length}</div>
+                <p className="text-xs text-purple-600 dark:text-purple-400 font-medium">
+                  {
+                    incomingShipments.filter((s) => s.status === "in-transit")
+                      .length
+                  }{" "}
+                  in transit
+                </p>
+                <div className="mt-2 w-full bg-purple-200 dark:bg-purple-900/40 rounded-full h-2">
+                  <div className="bg-purple-500 dark:bg-purple-400 h-2 rounded-full" style={{ width: '75%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 border-blue-200 dark:border-blue-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                  Avg Delivery Time
+                </CardTitle>
+                <div className="p-2 bg-blue-500 dark:bg-blue-600 rounded-lg">
+                  <BarChart3 className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-blue-800 dark:text-blue-200">3.2 days</div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                  -0.5 days improvement
+                </p>
+                <div className="mt-2 w-full bg-blue-200 dark:bg-blue-900/40 rounded-full h-2">
+                  <div className="bg-blue-500 dark:bg-blue-400 h-2 rounded-full" style={{ width: '80%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/30 border-green-200 dark:border-green-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300">
+                  Eco Deliveries
+                </CardTitle>
+                <div className="p-2 bg-green-500 dark:bg-green-600 rounded-lg">
+                  <Leaf className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-green-800 dark:text-green-200">{ecoDeliveryPercentage}%</div>
+                <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+                  {ecoDeliveryPercentage >= 70
+                    ? "Green badge earned!"
+                    : "Keep going for green badge!"}
+                </p>
+                <div className="mt-2 w-full bg-green-200 dark:bg-green-900/40 rounded-full h-2">
+                  <div className="bg-green-500 dark:bg-green-400 h-2 rounded-full" style={{ width: `${ecoDeliveryPercentage}%` }}></div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/50 dark:to-orange-900/30 border-orange-200 dark:border-orange-800/50 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-orange-700 dark:text-orange-300">
+                  Supplier Rating
+                </CardTitle>
+                <div className="p-2 bg-orange-500 dark:bg-orange-600 rounded-lg">
+                  <Users className="h-4 w-4 text-white" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-orange-800 dark:text-orange-200">4.7/5</div>
+                <p className="text-xs text-orange-600 dark:text-orange-400 font-medium">Excellent service</p>
+                <div className="mt-2 w-full bg-orange-200 dark:bg-orange-900/40 rounded-full h-2">
+                  <div className="bg-orange-500 dark:bg-orange-400 h-2 rounded-full" style={{ width: '94%' }}></div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Live Tracking */}
+          <Card className="dark:bg-slate-900/50 dark:border-slate-800">
+            <CardHeader>
+              <CardTitle className="dark:text-white">Live Shipment Tracking</CardTitle>
+              <CardDescription className="dark:text-slate-400">
+                Monitor your shipments with real-time updates and interactive maps
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="active" className="w-full">
+                <TabsList className="flex w-full overflow-x-auto gap-1 dark:bg-slate-800 rounded-lg p-1 sm:grid sm:grid-cols-2">
+                  <TabsTrigger value="active" className="flex-1 min-w-[140px] sm:min-w-0 dark:data-[state=active]:bg-slate-700 dark:text-slate-300">Active Shipments</TabsTrigger>
+                  <TabsTrigger value="completed" className="flex-1 min-w-[140px] sm:min-w-0 dark:data-[state=active]:bg-slate-700 dark:text-slate-300">Completed Orders</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="active" className="space-y-4">
+                  {incomingShipments.map((shipment) => (
+                    <div
+                      key={shipment.id}
+                      className="p-4 border dark:border-slate-700 dark:bg-slate-800/50 rounded-lg space-y-4"
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-4">
+                          <div>
+                            <div className="font-medium">{shipment.id}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {shipment.supplier}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {shipment.route}
+                            </div>
+                          </div>
+                          <Badge
+                            variant={
+                              shipment.status === "in-transit"
+                                ? "secondary"
+                                : shipment.status === "dispatched"
+                                  ? "outline"
+                                  : "outline"
+                            }
+                          >
+                            {shipment.status.replace("-", " ")}
+                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className={
+                              shipment.deliveryType === "eco"
+                                ? "text-primary border-primary"
+                                : "text-blue-600 border-blue-600"
+                            }
+                          >
+                            <Leaf className="h-3 w-3 mr-1" />
+                            {shipment.deliveryType === "eco" ? "Eco" : "Fast"}
+                          </Badge>
+                        </div>
+                        <div className="text-left sm:text-right w-full sm:w-auto">
+                          <div className="text-sm font-medium">
+                            ETA: {shipment.eta}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {shipment.estimatedDelivery}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span>Delivery Progress</span>
+                          <span>{shipment.progress}%</span>
+                        </div>
+                        <Progress value={shipment.progress} className="h-2" />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">
+                            Transporter:
+                          </span>
+                          <div className="font-medium">{shipment.transporter}</div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">
+                            Carbon Impact:
+                          </span>
+                          <div className="font-medium text-primary">
+                            {shipment.carbonFootprint}t CO₂
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Cost:</span>
+                          <div className="font-medium">
+                            {formatCurrencyINR(shipment.cost)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Recent Updates:</div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {shipment.trackingUpdates
+                            .slice(-3)
+                            .reverse()
+                            .map((update, index) => (
+                              <div
+                                key={index}
+                                className="flex justify-between text-xs"
+                              >
+                                <span className="text-muted-foreground">
+                                  {update.time}
+                                </span>
+                                <span>{update.status}</span>
+                                <span className="text-muted-foreground">
+                                  {update.location}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+
+                      {shipment.status === "in-transit" && (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">
+                            Live Tracking Map:
+                          </div>
+                          <InteractiveMap
+                            routes={getShipmentRoutes(shipment)}
+                            vehicles={[
+                              {
+                                id: `vehicle-${shipment.id}`,
+                                type: "truck" as const,
+                                position: { lat: 39.0458, lng: -76.6413 },
+                                shipmentId: shipment.id,
+                                status: "in-transit" as const,
+                              },
+                            ]}
+                            selectedRoute={`route-${shipment.id}`}
+                            showVehicles={true}
+                            trackingMode={true}
+                            className="h-64 sm:h-80 md:h-96"
+                          />
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedShipment(shipment);
+                            setShowTrackShipment(true);
+                          }}
+                        >
+                          <MapPin className="h-4 w-4 mr-1" />
+                          View Map
+                        </Button>
+                        <Button size="sm" variant="outline">
+                          Contact Supplier
+                        </Button>
+                        <AIInsightsButton
+                          message={`What's the status of my order ${shipment.id}? When will it arrive and are there any delivery issues I should know about?`}
+                          context={{ shipmentId: shipment.id, shipment }}
+                          onClick={onAIInsights}
+                          size="sm"
+                          className="flex-1 min-w-[110px] sm:min-w-0"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+
+                <TabsContent value="completed" className="space-y-4">
+                  {completedShipments.map((shipment) => (
+                    <div key={shipment.id} className="p-4 border rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <div className="font-medium">{shipment.id}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {shipment.supplier}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Delivered: {shipment.deliveredDate}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {shipment.onTime && (
+                            <Badge
+                              variant="outline"
+                              className="text-primary border-primary"
+                            >
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              On Time
+                            </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={
+                              shipment.deliveryType === "eco"
+                                ? "text-primary border-primary"
+                                : "text-blue-600 border-blue-600"
+                            }
+                          >
+                            {shipment.deliveryType === "eco" ? "Eco" : "Fast"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {shipment.rating ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-sm text-muted-foreground">
+                                Your rating:
+                              </span>
+                              <div className="flex">
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                  <div
+                                    key={star}
+                                    className={`text-sm ${star <= shipment.rating
+                                      ? "text-yellow-500"
+                                      : "text-muted-foreground"
+                                      }`}
+                                  >
+                                    ★
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              Not rated yet
+                            </span>
+                          )}
+                        </div>
+                        {!shipment.rating && (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setShipmentToRate(shipment);
+                              setShowRatingDialog(true);
+                            }}
+                          >
+                            Rate Delivery
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            {/* Enhanced Delivery Preferences */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Delivery Preferences</CardTitle>
+                <CardDescription>
+                  Set your default delivery preferences for future orders
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Tabs
+                  value={deliveryPreference}
+                  onValueChange={setDeliveryPreference}
+                  className="w-full"
+                >
+                  <TabsList className="flex w-full overflow-x-auto gap-1 rounded-lg p-1 bg-muted/40 sm:grid sm:grid-cols-2">
+                    <TabsTrigger value="fast" className="flex-1 min-w-[140px] sm:min-w-0">Fast Delivery</TabsTrigger>
+                    <TabsTrigger value="eco" className="flex-1 min-w-[140px] sm:min-w-0">Eco Delivery</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="fast" className="space-y-4">
+                    <div className="text-sm text-muted-foreground">
+                      Priority shipping with faster delivery times
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Delivery Time:</span>
+                        <span className="font-medium">1-2 days</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Carbon Impact:</span>
+                        <span className="text-destructive">Higher</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Cost:</span>
+                        <span className="font-medium">Premium (+15-25%)</span>
+                      </div>
+                    </div>
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        Fast delivery may impact your sustainability score
+                      </AlertDescription>
+                    </Alert>
+                  </TabsContent>
+                  <TabsContent value="eco" className="space-y-4">
+                    <div className="text-sm text-muted-foreground">
+                      Environmentally friendly shipping options
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Delivery Time:</span>
+                        <span className="font-medium">3-5 days</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Carbon Impact:</span>
+                        <span className="text-primary">Lower (-60%)</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Cost:</span>
+                        <span className="font-medium">Standard</span>
+                      </div>
+                    </div>
+                    <Alert>
+                      <CheckCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        Eco delivery helps you earn green badges and reduces
+                        environmental impact
+                      </AlertDescription>
+                    </Alert>
+                  </TabsContent>
+                </Tabs>
+                <div className="mt-4">
+                  <Button className="w-full">Save Preferences</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Supplier Performance */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Supplier Performance</CardTitle>
+                <CardDescription>
+                  Track reliability and service quality of your suppliers
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {suppliers.map((supplier) => (
+                    <div key={supplier.id} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">{supplier.id}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {supplier.totalOrders} orders • {supplier.onTimeRate}%
+                            on-time
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">{supplier.rating}</span>
+                            <div className="flex">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <div
+                                  key={star}
+                                  className={`text-sm ${star <= Math.floor(supplier.rating)
+                                    ? "text-yellow-500"
+                                    : "text-muted-foreground"
+                                    }`}
+                                >
+                                  ★
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <Progress value={supplier.onTimeRate} className="h-2" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Sustainability Dashboard */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Your Sustainability Impact</CardTitle>
+              <CardDescription>
+                Track your environmental choices and carbon savings
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-primary mb-2">
+                    {ecoDeliveryPercentage >= 70
+                      ? "🌱"
+                      : ecoDeliveryPercentage >= 50
+                        ? "🌿"
+                        : "🌱"}
+                  </div>
+                  <div className="text-lg font-semibold text-primary">
+                    {ecoDeliveryPercentage >= 70
+                      ? "Eco Champion"
+                      : ecoDeliveryPercentage >= 50
+                        ? "Green Supporter"
+                        : "Getting Started"}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Sustainability Level
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>Eco Delivery Choice</span>
+                      <span>{ecoDeliveryPercentage}%</span>
+                    </div>
+                    <Progress value={ecoDeliveryPercentage} className="h-2" />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>Carbon Savings</span>
+                      <span>2.1t CO₂</span>
+                    </div>
+                    <Progress value={75} className="h-2" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Achievements</div>
+                  <div className="space-y-1">
+                    {ecoDeliveryPercentage >= 70 && (
+                      <Badge
+                        variant="outline"
+                        className="text-primary border-primary"
+                      >
+                        <Leaf className="h-3 w-3 mr-1" />
+                        Green Champion
+                      </Badge>
+                    )}
+                    {ecoDeliveryPercentage >= 50 && (
+                      <Badge
+                        variant="outline"
+                        className="text-primary border-primary"
+                      >
+                        <Leaf className="h-3 w-3 mr-1" />
+                        Eco Supporter
+                      </Badge>
+                    )}
+                    <div className="text-xs text-muted-foreground mt-2">
+                      Next: Reach 80% eco deliveries for Sustainability Leader badge
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Enhanced Analytics Section */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                Delivery Analytics & Sustainability
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400 text-lg">
+                Track your delivery patterns and environmental impact
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AnalyticsCharts userRole="customer" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tracking" className="space-y-6">
+          {/* Enhanced Live Tracking Tab */}
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-blue-100 to-cyan-100 dark:from-blue-900/50 dark:to-cyan-900/50 rounded-t-lg">
+              <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <MapPin className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                Live Shipment Tracking
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400">Monitor your shipments with real-time updates and interactive maps</CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <Tabs defaultValue="active" className="w-full">
+                <TabsList className="flex w-full overflow-x-auto gap-1 bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 p-1 rounded-lg sm:grid sm:grid-cols-2">
+                  <TabsTrigger
+                    value="active"
+                    className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    Active Shipments
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="completed"
+                    className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-md data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Completed Orders
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="active" className="space-y-4">
+                  {incomingShipments.map((shipment) => (
+                    <div
+                      key={shipment.id}
+                      className="p-6 border dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800/50 shadow-sm hover:shadow-lg transition-all duration-300 space-y-4"
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-4 flex-wrap">
+                          <div className={`p-3 rounded-xl ${shipment.deliveryType === 'eco' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-blue-100 dark:bg-blue-900/30'
+                            }`}>
+                            <Package className={`h-5 w-5 ${shipment.deliveryType === 'eco' ? 'text-green-600 dark:text-green-400' : 'text-blue-600 dark:text-blue-400'
+                              }`} />
+                          </div>
+                          <div>
+                            <div className="font-bold text-lg text-slate-800 dark:text-slate-200">{shipment.id}</div>
+                            <div className="text-sm text-slate-600 dark:text-slate-400 font-medium">{shipment.supplier}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-500">{shipment.route}</div>
+                          </div>
+                          <Badge
+                            variant={
+                              shipment.status === "in-transit" ? "secondary" :
+                                shipment.status === "dispatched" ? "outline" : "outline"
+                            }
+                            className={
+                              shipment.status === "in-transit" ? "bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300" :
+                                shipment.status === "dispatched" ? "bg-yellow-100 dark:bg-yellow-900/50 text-yellow-800 dark:text-yellow-300" :
+                                  "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300"
+                            }
+                          >
+                            {shipment.status.replace("-", " ").toUpperCase()}
+                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className={
+                              shipment.deliveryType === "eco"
+                                ? "text-green-600 dark:text-green-400 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30"
+                                : "text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30"
+                            }
+                          >
+                            <Leaf className="h-3 w-3 mr-1" />
+                            {shipment.deliveryType === "eco" ? "Eco" : "Fast"}
+                          </Badge>
+                        </div>
+                        <div className="text-left sm:text-right w-full sm:w-auto">
+                          <div className="text-lg font-bold text-slate-800 dark:text-slate-200">
+                            ETA: {shipment.eta}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {shipment.estimatedDelivery}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm font-medium">
+                          <span className="text-slate-600">Delivery Progress</span>
+                          <span className="text-slate-800">{shipment.progress}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 rounded-full h-3">
+                          <div className={`h-3 rounded-full ${shipment.deliveryType === 'eco' ? 'bg-gradient-to-r from-green-400 to-green-600' : 'bg-gradient-to-r from-blue-400 to-blue-600'
+                            }`} style={{ width: `${shipment.progress}%` }}></div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                        <div className="p-3 bg-slate-50 rounded-lg">
+                          <div className="text-slate-500 text-xs">Transporter:</div>
+                          <div className="font-semibold text-slate-800">{shipment.transporter}</div>
+                        </div>
+                        <div className="p-3 bg-slate-50 rounded-lg">
+                          <div className="text-slate-500 text-xs">Carbon Impact:</div>
+                          <div className="font-semibold text-green-600">{shipment.carbonFootprint}t CO₂</div>
+                        </div>
+                        <div className="p-3 bg-slate-50 rounded-lg">
+                          <div className="text-slate-500 text-xs">Cost:</div>
+                          <div className="font-semibold text-slate-800">{formatCurrencyINR(shipment.cost)}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Button size="sm" variant="outline" className="flex-1 hover:bg-blue-50 hover:border-blue-300">
+                          <MapPin className="h-4 w-4 mr-1" />
+                          View Map
+                        </Button>
+                        <Button size="sm" variant="outline" className="flex-1 hover:bg-green-50 hover:border-green-300">
+                          <Users className="h-4 w-4 mr-1" />
+                          Contact Supplier
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+
+                <TabsContent value="completed" className="space-y-4">
+                  {completedShipments.map((shipment) => (
+                    <div key={shipment.id} className="p-4 border rounded-lg bg-white shadow-sm">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
+                        <div>
+                          <div className="font-semibold text-slate-800">{shipment.id}</div>
+                          <div className="text-sm text-slate-600">{shipment.supplier}</div>
+                          <div className="text-xs text-slate-500">Delivered: {shipment.deliveredDate}</div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {shipment.onTime && (
+                            <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              On Time
+                            </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={
+                              shipment.deliveryType === "eco"
+                                ? "text-green-600 border-green-300 bg-green-50"
+                                : "text-blue-600 border-blue-300 bg-blue-50"
+                            }
+                          >
+                            {shipment.deliveryType === "eco" ? "Eco" : "Fast"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {shipment.rating ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-sm text-slate-600">Your rating:</span>
+                              <div className="flex">
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                  <div
+                                    key={star}
+                                    className={`text-sm ${star <= shipment.rating
+                                      ? "text-yellow-500"
+                                      : "text-slate-300"
+                                      }`}
+                                  >
+                                    ★
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-slate-600">Not rated yet</span>
+                          )}
+                        </div>
+                        {!shipment.rating && (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setShipmentToRate(shipment);
+                              setShowRatingDialog(true);
+                            }}
+                            className="bg-orange-600 hover:bg-orange-700 text-white"
+                          >
+                            Rate Delivery
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="preferences" className="space-y-6">
+          {/* Enhanced Delivery Preferences */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/50 dark:to-emerald-950/30 dark:border-green-800/50">
+              <CardHeader className="bg-gradient-to-r from-green-100 to-emerald-100 dark:from-green-950/50 dark:to-emerald-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-green-200 flex items-center gap-2">
+                  <Leaf className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  Delivery Preferences
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Set your default delivery preferences for future orders</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <Tabs
+                  value={deliveryPreference}
+                  onValueChange={setDeliveryPreference}
+                  className="w-full"
+                >
+                  <TabsList className="flex w-full overflow-x-auto gap-1 bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 p-1 rounded-lg sm:grid sm:grid-cols-2">
+                    <TabsTrigger
+                      value="fast"
+                      className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-600 data-[state=active]:shadow-md data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                    >
+                      <Zap className="h-4 w-4 mr-2" />
+                      Fast Delivery
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="eco"
+                      className="flex-1 min-w-[140px] sm:min-w-0 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-600 data-[state=active]:shadow-md data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400 dark:text-slate-300 font-semibold transition-all duration-200"
+                    >
+                      <Leaf className="h-4 w-4 mr-2" />
+                      Eco Delivery
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="fast" className="space-y-4 mt-4">
+                    <div className="text-sm text-slate-600 dark:text-slate-400">Priority shipping with faster delivery times</div>
+                    <div className="space-y-2 dark:text-slate-300">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Delivery Time:</span>
+                        <span className="font-medium">1-2 days</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Carbon Impact:</span>
+                        <span className="text-red-600 dark:text-red-400">Higher</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Cost:</span>
+                        <span className="font-medium">Premium (+15-25%)</span>
+                      </div>
+                    </div>
+                    <Alert className="border-red-200 bg-red-50 dark:border-red-800/50 dark:bg-red-900/20">
+                      <AlertTriangle className="h-4 w-4 text-red-500 dark:text-red-400" />
+                      <AlertDescription className="text-red-700 dark:text-red-300">
+                        Fast delivery may impact your sustainability score
+                      </AlertDescription>
+                    </Alert>
+                  </TabsContent>
+                  <TabsContent value="eco" className="space-y-4 mt-4">
+                    <div className="text-sm text-slate-600 dark:text-slate-400">Environmentally friendly shipping options</div>
+                    <div className="space-y-2 dark:text-slate-300">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Delivery Time:</span>
+                        <span className="font-medium">3-5 days</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Carbon Impact:</span>
+                        <span className="text-green-600 dark:text-green-400">Lower (-60%)</span>
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Cost:</span>
+                        <span className="font-medium">Standard</span>
+                      </div>
+                    </div>
+                    <Alert className="border-green-200 bg-green-50 dark:border-green-800/50 dark:bg-green-900/20">
+                      <CheckCircle className="h-4 w-4 text-green-500 dark:text-green-400" />
+                      <AlertDescription className="text-green-700 dark:text-green-300">
+                        Eco delivery helps you earn green badges and reduces environmental impact
+                      </AlertDescription>
+                    </Alert>
+                  </TabsContent>
+                </Tabs>
+                <div className="mt-4">
+                  <Button className="w-full bg-green-600 hover:bg-green-700 text-white">
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Save Preferences
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/50 dark:to-indigo-950/30 dark:border-blue-800/50">
+              <CardHeader className="bg-gradient-to-r from-blue-100 to-indigo-100 dark:from-blue-950/50 dark:to-indigo-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-blue-200 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  Supplier Performance
+                </CardTitle>
+                <CardDescription className="text-slate-600 dark:text-slate-400">Track reliability and service quality of your suppliers</CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  {suppliers.map((supplier) => (
+                    <div key={supplier.id} className="space-y-2">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="font-semibold text-slate-800">{supplier.id}</div>
+                          <div className="text-sm text-slate-600">
+                            {supplier.totalOrders} orders • {supplier.onTimeRate}% on-time
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">{supplier.rating}</span>
+                            <div className="flex">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <div
+                                  key={star}
+                                  className={`text-sm ${star <= Math.floor(supplier.rating)
+                                    ? "text-yellow-500"
+                                    : "text-slate-300"
+                                    }`}
+                                >
+                                  ★
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="w-full bg-slate-200 rounded-full h-2">
+                        <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${supplier.onTimeRate}%` }}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-6">
+          {/* Analytics Tab */}
+          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/50 dark:to-pink-950/30 dark:border-purple-800/50">
+              <CardHeader className="bg-gradient-to-r from-purple-100 to-pink-100 dark:from-purple-950/50 dark:to-pink-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-purple-200 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  Delivery Analytics
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-purple-700 dark:text-slate-300 font-medium">Total Deliveries</span>
+                    <span className="text-purple-800 dark:text-purple-200 font-bold text-xl">24</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-purple-700 dark:text-slate-300 font-medium">On-Time Rate</span>
+                    <span className="text-purple-800 dark:text-purple-200 font-bold text-xl">92%</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-purple-700 dark:text-slate-300 font-medium">Avg Delivery Time</span>
+                    <span className="text-purple-800 dark:text-purple-200 font-bold text-xl">3.2 days</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-0 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-950/50 dark:to-green-950/30 dark:border-emerald-800/50">
+              <CardHeader className="bg-gradient-to-r from-emerald-100 to-green-100 dark:from-emerald-950/50 dark:to-green-950/50 rounded-t-lg">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-emerald-200 flex items-center gap-2">
+                  <Leaf className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  Sustainability Impact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="text-center mb-4">
+                  <div className="text-4xl font-bold text-emerald-800 dark:text-emerald-200 mb-2">
+                    {ecoDeliveryPercentage >= 70 ? "🌱" : ecoDeliveryPercentage >= 50 ? "🌿" : "🌱"}
+                  </div>
+                  <div className="text-lg font-semibold text-emerald-800 dark:text-emerald-200">
+                    {ecoDeliveryPercentage >= 70 ? "Eco Champion" : ecoDeliveryPercentage >= 50 ? "Green Supporter" : "Getting Started"}
+                  </div>
+                  <div className="text-sm text-emerald-600 dark:text-emerald-400">Sustainability Level</div>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-emerald-700 dark:text-slate-300">Eco Delivery Choice</span>
+                      <span className="text-emerald-800 dark:text-emerald-200 font-medium">{ecoDeliveryPercentage}%</span>
+                    </div>
+                    <div className="w-full bg-emerald-200 dark:bg-slate-700 rounded-full h-2">
+                      <div className="bg-emerald-500 dark:bg-emerald-400 h-2 rounded-full" style={{ width: `${ecoDeliveryPercentage}%` }}></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-emerald-700 dark:text-slate-300">Carbon Savings</span>
+                      <span className="text-emerald-800 dark:text-emerald-200 font-medium">2.1t CO₂</span>
+                    </div>
+                    <div className="w-full bg-emerald-200 dark:bg-slate-700 rounded-full h-2">
+                      <div className="bg-emerald-500 dark:bg-emerald-400 h-2 rounded-full" style={{ width: '75%' }}></div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Telegram Integration Section */}
+          <div className="mt-6">
+            <TelegramLink
+              userId="customer-demo"
+              userName="customer"
+            />
+          </div>
+
+          <Card className="shadow-lg border-0 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/50 dark:border-slate-700">
+            <CardHeader className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 rounded-t-lg">
+              <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                Detailed Analytics
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-slate-400 text-lg">
+                Comprehensive delivery insights and environmental impact
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AnalyticsCharts userRole="customer" />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Rating Dialog */}
+      <Dialog open={showRatingDialog} onOpenChange={setShowRatingDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Rate Your Delivery Experience</DialogTitle>
+            <DialogDescription>
+              Help us improve by rating your delivery from {shipmentToRate?.supplier}
+            </DialogDescription>
+          </DialogHeader>
+          {shipmentToRate && (
+            <RatingForm
+              shipment={shipmentToRate}
+              onSubmit={handleRateSupplier}
+              onClose={() => setShowRatingDialog(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Track Shipment Dialog */}
+      <Dialog open={showTrackShipment} onOpenChange={setShowTrackShipment}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Track Your Shipment</DialogTitle>
+            <DialogDescription>
+              Enter shipment ID or select from your active shipments
+            </DialogDescription>
+          </DialogHeader>
+          <TrackShipmentDialog
+            shipments={incomingShipments}
+            onClose={() => setShowTrackShipment(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function TrackShipmentDialog({
+  shipments,
+  onClose,
+}: {
+  shipments: any[];
+  onClose: () => void;
+}) {
+  const [trackingId, setTrackingId] = useState("");
+  const [selectedShipment, setSelectedShipment] = useState<any>(null);
+
+  const handleTrack = () => {
+    const shipment = shipments.find((s) => s.id === trackingId);
+    if (shipment) {
+      setSelectedShipment(shipment);
+    }
+  };
+
+  const getTrackingRoute = (shipment: any) => [
+    {
+      id: `track-${shipment.id}`,
+      name: shipment.route,
+      locations: [
+        {
+          id: "origin",
+          name: "Origin",
+          lat: 40.7128,
+          lng: -74.006,
+          type: "origin" as const,
+        },
+        {
+          id: "current",
+          name: "Current",
+          lat: 39.0458,
+          lng: -76.6413,
+          type: "waypoint" as const,
+        },
+        {
+          id: "dest",
+          name: "Destination",
+          lat: 34.0522,
+          lng: -118.2437,
+          type: "destination" as const,
+        },
+      ],
+      distance: "2,789 miles",
+      duration: shipment.eta,
+      cost: `${formatCurrencyINR(shipment.cost)}`,
+      carbonFootprint: `${shipment.carbonFootprint}t CO₂`,
+      riskScore: 1,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="tracking">Enter Shipment ID</Label>
+        <div className="flex gap-2">
+          <Input
+            id="tracking"
+            placeholder="e.g., SH001"
+            value={trackingId}
+            onChange={(e) => setTrackingId(e.target.value)}
+          />
+          <Button onClick={handleTrack}>Track</Button>
+        </div>
+      </div>
+
+      <div className="text-sm text-muted-foreground">
+        Or select from your active shipments:
+      </div>
+      <div className="space-y-2">
+        {shipments.map((shipment) => (
+          <Button
+            key={shipment.id}
+            variant="outline"
+            className="w-full justify-start bg-transparent"
+            onClick={() => setSelectedShipment(shipment)}
+          >
+            <div className="flex items-center justify-between w-full">
+              <span>
+                {shipment.id} - {shipment.supplier}
+              </span>
+              <Badge variant="secondary">{shipment.status}</Badge>
+            </div>
+          </Button>
+        ))}
+      </div>
+
+      {selectedShipment && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">
+              {selectedShipment.id} Tracking Details
+            </CardTitle>
+            <CardDescription>{selectedShipment.route}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex justify-between text-sm">
+                <span>Progress</span>
+                <span>
+                  {selectedShipment.progress}% • ETA: {selectedShipment.eta}
+                </span>
+              </div>
+              <Progress value={selectedShipment.progress} className="h-3" />
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Live Tracking Map:</div>
+                <InteractiveMap
+                  routes={getTrackingRoute(selectedShipment)}
+                  vehicles={[
+                    {
+                      id: `track-vehicle-${selectedShipment.id}`,
+                      type: "truck" as const,
+                      position: { lat: 39.0458, lng: -76.6413 },
+                      shipmentId: selectedShipment.id,
+                      status: "in-transit" as const,
+                    },
+                  ]}
+                  selectedRoute={`track-${selectedShipment.id}`}
+                  showVehicles={true}
+                  trackingMode={true}
+                  className="h-64 sm:h-80 md:h-96"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Tracking History:</div>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {selectedShipment.trackingUpdates.map(
+                    (update: any, index: number) => (
+                      <div
+                        key={index}
+                        className="flex justify-between text-sm p-2 bg-muted rounded"
+                      >
+                        <div>
+                          <div className="font-medium">{update.status}</div>
+                          <div className="text-muted-foreground">
+                            {update.location}
+                          </div>
+                        </div>
+                        <div className="text-muted-foreground">
+                          {update.time}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="flex gap-2 pt-4">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          className="flex-1 bg-transparent"
+        >
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RatingForm({
+  shipment,
+  onSubmit,
+  onClose,
+}: {
+  shipment: any;
+  onSubmit: (shipmentId: string, rating: number, feedback: string) => void;
+  onClose: () => void;
+}) {
+  const [rating, setRating] = useState(0);
+  const [feedback, setFeedback] = useState("");
+
+  const handleSubmit = () => {
+    if (rating > 0) {
+      onSubmit(shipment.id, rating, feedback);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>Overall Rating</Label>
+        <div className="flex gap-1">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              onClick={() => setRating(star)}
+              className={`text-2xl ${star <= rating ? "text-yellow-500" : "text-muted-foreground"
+                } hover:text-yellow-400`}
+            >
+              ★
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="feedback">Feedback (Optional)</Label>
+        <Textarea
+          id="feedback"
+          placeholder="Share your experience with this delivery..."
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          className="flex-1 bg-transparent"
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={rating === 0}
+          className="flex-1"
+        >
+          Submit Rating
+        </Button>
+      </div>
+    </div>
+  );
+}
