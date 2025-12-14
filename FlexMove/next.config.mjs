@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone', // Required for Netlify
+
+  // PWA Configuration
+  reactStrictMode: true,
+
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -11,7 +15,27 @@ const nextConfig = {
     unoptimized: true,
   },
   experimental: {
-    optimizePackageImports: ['lucide-react'],
+    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
+  },
+
+  // Performance optimizations
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production',
+  },
+
+  // Headers for PWA
+  async headers() {
+    return [
+      {
+        source: '/manifest.json',
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/manifest+json',
+          },
+        ],
+      },
+    ]
   },
 }
 

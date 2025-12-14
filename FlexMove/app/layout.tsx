@@ -9,10 +9,16 @@ import "./globals.css"
 export const metadata: Metadata = {
   title: "FlexMove - Supply Chain Management Platform",
   description: "Connect suppliers, transporters, and customers with intelligent supply chain management",
+  manifest: "/manifest.json",
   icons: {
     icon: "/images/logo.png",
     apple: "/images/logo.png",
     shortcut: "/images/logo.png"
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "FlexMove"
   }
 }
 
