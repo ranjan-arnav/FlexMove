@@ -1,5 +1,6 @@
 # Netlify Configuration for Next.js
 [build]
+  base = "FlexMove"
   command = "npm run build"
   publish = ".next"
 
@@ -11,10 +12,3 @@
   from = "/*"
   to = "/index.html"
   status = 200
-
-# Environment variables (set these in Netlify dashboard)
-# NEXT_PUBLIC_GEMINI_API_KEY
-# NEXT_PUBLIC_SUPABASE_URL
-# NEXT_PUBLIC_SUPABASE_ANON_KEY
-# TELEGRAM_BOT_TOKEN
-# RESEND_API_KEY
