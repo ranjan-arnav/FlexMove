@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +20,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { InteractiveMap } from "@/components/interactive-map";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+// Optimized icon imports - only import what's needed
 import {
   Truck,
   Ship,
@@ -62,10 +63,24 @@ import {
   Bell
 } from "lucide-react";
 import Image from "next/image";
-import { AnalyticsCharts } from "@/components/analytics-charts";
+
+// Lazy load heavy components for better performance
+const InteractiveMap = dynamic(() => import("@/components/interactive-map").then(mod => mod.InteractiveMap), {
+  loading: () => <div className="h-96 bg-muted animate-pulse rounded-lg" />,
+  ssr: false
+});
+
+const AnalyticsCharts = dynamic(() => import("@/components/analytics-charts").then(mod => mod.AnalyticsCharts), {
+  loading: () => <div className="h-96 bg-muted animate-pulse rounded-lg" />
+});
+
+const Chatbot = dynamic(() => import("@/components/chatbot").then(mod => mod.Chatbot), {
+  loading: () => <div className="h-12 w-12 bg-primary rounded-full animate-pulse" />,
+  ssr: false
+});
+
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart";
 import { Bar, BarChart, Line, LineChart, Pie, PieChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, Legend as RLegend, Cell } from "recharts";
-import { Chatbot } from "@/components/chatbot";
 import { AIInsightsButton } from "@/components/ai-insights-button";
 import { TelegramLink } from "@/components/telegram-link";
 import { storage } from "@/lib/storage";
@@ -1519,7 +1534,7 @@ export default function FlexMovePage() {
                   <div className="text-center">
                     <button
                       onClick={() => setIsLogin(!isLogin)}
-                      className="text-sm font-semibold text-primary hover:underline"
+                      className="text-sm font-semibold text-cyan-400 hover:text-cyan-300 hover:underline"
                     >
                       {isLogin
                         ? "Don't have an account? Sign up"

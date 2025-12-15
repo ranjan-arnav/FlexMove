@@ -54,9 +54,9 @@
   --popover: oklch(0.14 0.012 280);
   --popover-foreground: oklch(0.98 0.002 280);
 
-  /* Vibrant emerald primary */
-  --primary: oklch(0.70 0.24 160);
-  --primary-foreground: oklch(0.08 0.008 280);
+  /* Vibrant emerald primary - MUCH DARKER FOR DARK MODE */
+  --primary: oklch(0.45 0.14 160);
+  --primary-foreground: oklch(0.98 0.002 280);
 
   /* Subtle secondary */
   --secondary: oklch(0.18 0.015 280);
@@ -232,7 +232,8 @@
 @layer components {
 
   /* Modern card with depth */
-  .dark [class*="card"] {
+  /* Modern card with depth */
+  .dark [data-slot="card"] {
     background: oklch(0.12 0.01 280);
     border: 1px solid oklch(0.18 0.015 280);
     box-shadow:
@@ -240,7 +241,7 @@
       0 0 0 1px oklch(0.18 0.015 280 / 0.5) inset;
   }
 
-  .dark [class*="card"]:hover {
+  .dark [data-slot="card"]:hover {
     border-color: oklch(0.22 0.018 280);
     box-shadow:
       0 4px 12px 0 oklch(0.05 0 0 / 0.15),
@@ -298,6 +299,24 @@
 }
 
 @layer utilities {
+
+  /* Original glow button - MUST BE FIRST */
+  .btn-glow {
+    position: relative;
+    border-color: rgba(255, 255, 255, 0.35) !important;
+  }
+
+  .btn-glow::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    z-index: -1;
+    border-radius: inherit;
+    background: radial-gradient(120% 120% at 50% 0%, rgba(34, 197, 94, 0.35), rgba(14, 165, 233, 0.25) 45%, rgba(167, 139, 250, 0.2) 70%, transparent 80%);
+    filter: blur(6px);
+    opacity: 0.9;
+    pointer-events: none;
+  }
 
   /* Glass effect */
   .glass {
